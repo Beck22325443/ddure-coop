@@ -160,7 +160,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 p-8">
       <div className="mx-auto max-w-6xl">
-        <header className="mb-8 grid grid-cols-[1fr_420px] gap-6">
+        <header className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_420px] lg:gap-6">
           <section className="rounded-[2rem] bg-white border border-slate-200 p-8 shadow-sm">
             <p className="text-blue-600 font-black mb-2">NIKKE CO-OP LOBBY</p>
             <h1 className="text-6xl font-black text-blue-600 tracking-tight">
@@ -193,7 +193,7 @@ export default function Home() {
           </section>
         </header>
 
-        <div className="grid grid-cols-[420px_1fr] gap-6">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[420px_1fr]">
           <section className="space-y-6">
             <div className="relative h-[330px] overflow-hidden rounded-[2rem] bg-gradient-to-br from-blue-100 to-white border border-blue-100 shadow-sm">
               <div className="absolute inset-0 opacity-70 bg-[radial-gradient(circle_at_20%_20%,#bfdbfe_0,transparent_25%),radial-gradient(circle_at_80%_70%,#dbeafe_0,transparent_25%)]" />
