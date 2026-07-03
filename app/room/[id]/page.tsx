@@ -120,10 +120,17 @@ export default function RoomPage() {
       router.push("/");
       return;
     }
+setRoom(data);
 
-    setRoom(data);
-    setEditTitle(data.title);
-    setEditNotice(data.notice || "");
+setEditTitle((current) => {
+  if (current) return current;
+  return data.title;
+});
+
+setEditNotice((current) => {
+  if (current) return current;
+  return data.notice || "";
+});
   }
 
   async function loadMessages() {
