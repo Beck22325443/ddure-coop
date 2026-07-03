@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Room = {
@@ -45,6 +45,28 @@ function getVisitorKey() {
   return key;
 }
 
+function formatTime(date: string) {
+  return new Date(date).toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getRemainingMs(createdAt: string) {
+  return new Date(createdAt).getTime() + 30 * 60 * 1000 - Date.now();
+}
+
+function getRemainingText(createdAt: string) {
+  const diff = getRemainingMs(createdAt);
+
+  if (diff <= 0) return "만료됨";
+
+  const min = Math.floor(diff / 1000 / 60);
+  const sec = Math.floor((diff / 1000) % 60);
+
+  return `${min}:${String(sec).padStart(2, "0")} 남음`;
+}
+
 export default function RoomPage() {
   const params = useParams();
   const router = useRouter();
@@ -57,9 +79,25 @@ export default function RoomPage() {
   const [message, setMessage] = useState("");
   const [visitorKey, setVisitorKey] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [, setTick] = useState(0);
 
   const isOwner = Boolean(room?.owner_key && getOwnerKey() === room.owner_key);
   const myParticipant = participants.find((p) => p.visitor_key === visitorKey);
+  const isFull = participants.length >= 5;
+
+  const sortedParticipants = useMemo(() => {
+    return [...participants].sort((a, b) => {
+      if (a.seat && !b.seat) return -1;
+      if (!a.seat && b.seat) return 1;
+      return a.created_at.localeCompare(b.created_at);
+    });
+  }, [participants]);
+
+  async function cleanupRoom() {
+    await supabase.from("participants").delete().eq("room_id", roomId);
+    await supabase.from("messages").delete().eq("room_id", roomId);
+    await supabase.from("rooms").delete().eq("id", roomId);
+  }
 
   async function loadRoom() {
     const { data, error } = await supabase
@@ -78,12 +116,8 @@ export default function RoomPage() {
       return;
     }
 
-    const roomAge = Date.now() - new Date(data.created_at).getTime();
-
-    if (roomAge > 30 * 60 * 1000) {
-      await supabase.from("participants").delete().eq("room_id", roomId);
-      await supabase.from("messages").delete().eq("room_id", roomId);
-      await supabase.from("rooms").delete().eq("id", roomId);
+    if (getRemainingMs(data.created_at) <= 0) {
+      await cleanupRoom();
       router.push("/");
       return;
     }
@@ -242,16 +276,7 @@ export default function RoomPage() {
 
     if (!confirm("정말 이 방을 삭제할까요?")) return;
 
-    await supabase.from("participants").delete().eq("room_id", roomId);
-    await supabase.from("messages").delete().eq("room_id", roomId);
-
-    const { error } = await supabase.from("rooms").delete().eq("id", roomId);
-
-    if (error) {
-      alert("방 삭제 실패: " + error.message);
-      return;
-    }
-
+    await cleanupRoom();
     router.push("/");
   }
 
@@ -265,6 +290,11 @@ export default function RoomPage() {
     loadMessages();
     loadParticipants();
     autoJoinRoom(key);
+
+    const timer = setInterval(() => {
+      setTick((v) => v + 1);
+      loadRoom();
+    }, 1000);
 
     const participantChannel = supabase
       .channel(`participants-room-${roomId}`)
@@ -309,6 +339,7 @@ export default function RoomPage() {
       .subscribe();
 
     return () => {
+      clearInterval(timer);
       supabase.removeChannel(participantChannel);
       supabase.removeChannel(messageChannel);
       supabase.removeChannel(roomChannel);
@@ -318,7 +349,7 @@ export default function RoomPage() {
   if (errorMessage) {
     return (
       <main className="min-h-screen bg-white text-zinc-900 p-6">
-        <div className="mx-auto max-w-xl">
+        <div className="mx-auto max-w-3xl">
           <Link href="/" className="mb-4 inline-block text-zinc-500">
             ← 로비로 돌아가기
           </Link>
@@ -333,14 +364,14 @@ export default function RoomPage() {
   if (!room) {
     return (
       <main className="min-h-screen bg-white text-zinc-900 p-6">
-        <div className="mx-auto max-w-xl">방 불러오는 중...</div>
+        <div className="mx-auto max-w-3xl">방 불러오는 중...</div>
       </main>
     );
   }
 
   return (
     <main className="min-h-screen bg-white text-zinc-900 p-6">
-      <div className="mx-auto max-w-xl">
+      <div className="mx-auto max-w-3xl">
         <Link href="/" className="mb-4 inline-block text-zinc-500">
           ← 로비로 돌아가기
         </Link>
@@ -348,10 +379,17 @@ export default function RoomPage() {
         <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-blue-600 text-sm font-bold">{room.type}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-blue-600 text-sm font-bold">{room.type}</p>
+                {isFull && (
+                  <span className="rounded-full bg-red-100 text-red-600 px-2 py-1 text-xs font-bold">
+                    FULL
+                  </span>
+                )}
+              </div>
               <h1 className="text-3xl font-bold">{room.title}</h1>
               <p className="text-zinc-500 text-sm mt-2">
-                참가자 {participants.length} / 5 · 생성 후 30분 뒤 자동 삭제
+                참가자 {participants.length} / 5 · {getRemainingText(room.created_at)}
               </p>
             </div>
 
@@ -391,6 +429,34 @@ export default function RoomPage() {
           >
             방 나가기
           </button>
+        </section>
+
+        <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
+          <h2 className="font-bold mb-3">참가자</h2>
+
+          <div className="grid grid-cols-1 gap-2">
+            {sortedParticipants.length === 0 ? (
+              <p className="text-zinc-500 text-sm">참가자가 없습니다.</p>
+            ) : (
+              sortedParticipants.map((p) => {
+                const ownerMark =
+                  room.owner_key && p.visitor_key === getOwnerKey() ? " 👑" : "";
+
+                return (
+                  <div
+                    key={p.id}
+                    className="rounded-xl bg-zinc-50 border border-zinc-200 p-3"
+                  >
+                    <span className="font-bold">{p.nickname}</span>
+                    <span>{ownerMark}</span>
+                    <span className="ml-3 text-zinc-500 text-sm">
+                      {p.seat || "자리 미선택"}
+                    </span>
+                  </div>
+                );
+              })
+            )}
+          </div>
         </section>
 
         <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
@@ -442,9 +508,14 @@ export default function RoomPage() {
             ) : (
               messages.map((msg) => (
                 <div key={msg.id} className="rounded-xl bg-white border border-zinc-200 p-3">
-                  <p className="text-blue-600 text-sm font-bold">
-                    {msg.nickname}
-                  </p>
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="text-blue-600 text-sm font-bold">
+                      {msg.nickname}
+                    </p>
+                    <p className="text-xs text-zinc-400">
+                      {formatTime(msg.created_at)}
+                    </p>
+                  </div>
                   <p>{msg.message}</p>
                 </div>
               ))

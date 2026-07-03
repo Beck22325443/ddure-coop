@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Room = {
@@ -12,6 +12,8 @@ type Room = {
   participant_count: number;
 };
 
+const roomTypes = ["전체", "10%방", "숫자단", "즐겜"];
+
 function getOwnerKey() {
   let key = localStorage.getItem("ddure_owner_key");
   if (!key) {
@@ -21,11 +23,26 @@ function getOwnerKey() {
   return key;
 }
 
+function getRemainingText(createdAt: string) {
+  const end = new Date(createdAt).getTime() + 30 * 60 * 1000;
+  const diff = end - Date.now();
+
+  if (diff <= 0) return "만료됨";
+
+  const min = Math.floor(diff / 1000 / 60);
+  const sec = Math.floor((diff / 1000) % 60);
+
+  return `${min}:${String(sec).padStart(2, "0")} 남음`;
+}
+
 export default function Home() {
   const [rooms, setRooms] = useState<Room[]>([]);
   const [roomTitle, setRoomTitle] = useState("");
   const [roomType, setRoomType] = useState("10%방");
+  const [filterType, setFilterType] = useState("전체");
+  const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [, setTick] = useState(0);
 
   async function deleteOldRooms() {
     const limit = new Date(Date.now() - 30 * 60 * 1000).toISOString();
@@ -85,8 +102,21 @@ export default function Home() {
     loadRooms();
   }
 
+  const filteredRooms = useMemo(() => {
+    return rooms.filter((room) => {
+      const typeOk = filterType === "전체" || room.type === filterType;
+      const searchOk = room.title.toLowerCase().includes(search.toLowerCase());
+      return typeOk && searchOk;
+    });
+  }, [rooms, filterType, search]);
+
   useEffect(() => {
     loadRooms();
+
+    const timer = setInterval(() => {
+      setTick((v) => v + 1);
+      loadRooms();
+    }, 10000);
 
     const roomsChannel = supabase
       .channel("rooms-realtime")
@@ -107,6 +137,7 @@ export default function Home() {
       .subscribe();
 
     return () => {
+      clearInterval(timer);
       supabase.removeChannel(roomsChannel);
       supabase.removeChannel(participantsChannel);
     };
@@ -114,7 +145,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-white text-zinc-900 p-6">
-      <div className="mx-auto max-w-xl">
+      <div className="mx-auto max-w-3xl">
         <h1 className="text-4xl font-bold text-center mb-2 text-blue-600">
           DDURE COOP
         </h1>
@@ -161,35 +192,77 @@ export default function Home() {
         </section>
 
         <section className="rounded-2xl bg-white border border-zinc-200 p-5 shadow-sm">
-          <h2 className="font-bold mb-3">생성된 방</h2>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold">생성된 방</h2>
+            <button
+              onClick={loadRooms}
+              className="rounded-lg bg-zinc-100 px-3 py-2 text-sm font-bold hover:bg-zinc-200"
+            >
+              새로고침
+            </button>
+          </div>
 
-          {rooms.length === 0 ? (
-            <p className="text-zinc-500 text-sm">아직 생성된 방이 없습니다.</p>
+          <input
+            className="w-full rounded-xl bg-zinc-50 border border-zinc-300 p-3 mb-3 outline-none focus:border-blue-500"
+            placeholder="방 제목 검색"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            {roomTypes.map((type) => (
+              <button
+                key={type}
+                onClick={() => setFilterType(type)}
+                className={`rounded-xl p-3 text-sm font-bold ${
+                  filterType === type
+                    ? "bg-blue-600 text-white"
+                    : "bg-zinc-100 hover:bg-zinc-200"
+                }`}
+              >
+                {type}
+              </button>
+            ))}
+          </div>
+
+          {filteredRooms.length === 0 ? (
+            <p className="text-zinc-500 text-sm">표시할 방이 없습니다.</p>
           ) : (
             <div className="space-y-2">
-              {rooms.map((room) => (
-                <Link
-                  key={room.id}
-                  href={`/room/${room.id}`}
-                  className="block w-full rounded-xl bg-zinc-50 border border-zinc-200 p-4 hover:bg-blue-50"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-blue-600 text-sm font-bold">
-                        {room.type}
-                      </p>
-                      <p className="font-bold">{room.title}</p>
-                      <p className="text-xs text-zinc-500 mt-1">
-                        생성 후 30분 뒤 자동 삭제
-                      </p>
-                    </div>
+              {filteredRooms.map((room) => {
+                const isFull = room.participant_count >= 5;
 
-                    <div className="rounded-xl bg-white border border-zinc-300 px-3 py-2 text-sm font-bold">
-                      {room.participant_count} / 5
+                return (
+                  <Link
+                    key={room.id}
+                    href={`/room/${room.id}`}
+                    className="block w-full rounded-xl bg-zinc-50 border border-zinc-200 p-4 hover:bg-blue-50"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <p className="text-blue-600 text-sm font-bold">
+                            {room.type}
+                          </p>
+                          {isFull && (
+                            <span className="rounded-full bg-red-100 text-red-600 px-2 py-1 text-xs font-bold">
+                              FULL
+                            </span>
+                          )}
+                        </div>
+                        <p className="font-bold">{room.title}</p>
+                        <p className="text-xs text-zinc-500 mt-1">
+                          {getRemainingText(room.created_at)}
+                        </p>
+                      </div>
+
+                      <div className="rounded-xl bg-white border border-zinc-300 px-3 py-2 text-sm font-bold">
+                        {room.participant_count} / 5
+                      </div>
                     </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </section>
