@@ -50,6 +50,7 @@ export default function Home() {
   const [nickname, setNickname] = useState("");
   const [nicknameReady, setNicknameReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [onlineCount, setOnlineCount] = useState(0);
   const [, setTick] = useState(0);
 
   async function deleteOldRooms() {
@@ -150,10 +151,35 @@ export default function Home() {
       .on("postgres_changes", { event: "*", schema: "public", table: "participants" }, loadRooms)
       .subscribe();
 
+    const onlineChannel = supabase
+      .channel("site-online", {
+        config: {
+          presence: {
+            key: getVisitorKey(),
+          },
+        },
+      })
+      .on("presence", { event: "sync" }, () => {
+        const state = onlineChannel.presenceState();
+        const count = (Object.values(state) as Array<Array<unknown>>).reduce(
+          (total, users) => total + users.length,
+          0
+        );
+        setOnlineCount(count);
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED") {
+          await onlineChannel.track({
+            online_at: new Date().toISOString(),
+          });
+        }
+      });
+
     return () => {
       clearInterval(timer);
       supabase.removeChannel(roomsChannel);
       supabase.removeChannel(participantsChannel);
+      supabase.removeChannel(onlineChannel);
     };
   }, []);
 
@@ -169,6 +195,10 @@ export default function Home() {
             <p className="text-slate-500 mt-4 text-lg">
               협동작전 방 생성, 자리 선택, 실시간 채팅을 한 곳에서.
             </p>
+
+            <div className="mt-5 inline-flex rounded-full bg-green-100 px-4 py-2 text-sm font-black text-green-700">
+              🟢 현재 접속자 {onlineCount}명
+            </div>
           </section>
 
           <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
