@@ -10,6 +10,7 @@ type Room = {
   title: string;
   type: string;
   owner_key: string | null;
+  owner_visitor_key: string | null;
   created_at: string;
 };
 
@@ -31,10 +32,6 @@ type Participant = {
 };
 
 const seats = ["B1", "B2", "B3", "B4", "B5"];
-
-function getOwnerKey() {
-  return localStorage.getItem("ddure_owner_key");
-}
 
 function getVisitorKey() {
   let key = localStorage.getItem("ddure_visitor_key");
@@ -58,12 +55,9 @@ function getRemainingMs(createdAt: string) {
 
 function getRemainingText(createdAt: string) {
   const diff = getRemainingMs(createdAt);
-
   if (diff <= 0) return "만료됨";
-
   const min = Math.floor(diff / 1000 / 60);
   const sec = Math.floor((diff / 1000) % 60);
-
   return `${min}:${String(sec).padStart(2, "0")} 남음`;
 }
 
@@ -81,8 +75,8 @@ export default function RoomPage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [, setTick] = useState(0);
 
-  const isOwner = Boolean(room?.owner_key && getOwnerKey() === room.owner_key);
   const myParticipant = participants.find((p) => p.visitor_key === visitorKey);
+  const isOwner = Boolean(room?.owner_visitor_key && room.owner_visitor_key === visitorKey);
   const isFull = participants.length >= 5;
 
   const sortedParticipants = useMemo(() => {
@@ -102,7 +96,7 @@ export default function RoomPage() {
   async function loadRoom() {
     const { data, error } = await supabase
       .from("rooms")
-      .select("id,title,type,owner_key,created_at")
+      .select("id,title,type,owner_key,owner_visitor_key,created_at")
       .eq("id", roomId)
       .maybeSingle();
 
@@ -155,9 +149,7 @@ export default function RoomPage() {
         nickname: savedName,
         seat: null,
       },
-      {
-        onConflict: "room_id,visitor_key",
-      }
+      { onConflict: "room_id,visitor_key" }
     );
 
     if (error) {
@@ -348,14 +340,12 @@ export default function RoomPage() {
 
   if (errorMessage) {
     return (
-      <main className="min-h-screen bg-white text-zinc-900 p-6">
-        <div className="mx-auto max-w-3xl">
-          <Link href="/" className="mb-4 inline-block text-zinc-500">
-            ← 로비로 돌아가기
-          </Link>
-          <div className="rounded-2xl bg-red-50 border border-red-200 p-5 text-red-700">
-            {errorMessage}
-          </div>
+      <main className="min-h-screen bg-slate-950 text-white p-8">
+        <Link href="/" className="text-slate-400">
+          ← 로비로 돌아가기
+        </Link>
+        <div className="mt-6 rounded-2xl bg-red-950 border border-red-800 p-5">
+          {errorMessage}
         </div>
       </main>
     );
@@ -363,184 +353,220 @@ export default function RoomPage() {
 
   if (!room) {
     return (
-      <main className="min-h-screen bg-white text-zinc-900 p-6">
-        <div className="mx-auto max-w-3xl">방 불러오는 중...</div>
+      <main className="min-h-screen bg-slate-950 text-white p-8">
+        방 불러오는 중...
       </main>
     );
   }
 
   return (
-    <main className="min-h-screen bg-white text-zinc-900 p-6">
-      <div className="mx-auto max-w-3xl">
-        <Link href="/" className="mb-4 inline-block text-zinc-500">
-          ← 로비로 돌아가기
-        </Link>
-
-        <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="flex items-center gap-2">
-                <p className="text-blue-600 text-sm font-bold">{room.type}</p>
-                {isFull && (
-                  <span className="rounded-full bg-red-100 text-red-600 px-2 py-1 text-xs font-bold">
-                    FULL
-                  </span>
-                )}
-              </div>
-              <h1 className="text-3xl font-bold">{room.title}</h1>
-              <p className="text-zinc-500 text-sm mt-2">
-                참가자 {participants.length} / 5 · {getRemainingText(room.created_at)}
-              </p>
+    <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
+      <div className="mx-auto max-w-7xl">
+        <header className="mb-6 flex items-center justify-between">
+          <div>
+            <Link href="/" className="text-slate-400 hover:text-white">
+              ← 로비로 돌아가기
+            </Link>
+            <h1 className="mt-3 text-4xl font-black text-white">
+              {room.title}
+            </h1>
+            <div className="mt-2 flex items-center gap-2 text-sm">
+              <span className="rounded-full bg-blue-600 px-3 py-1 font-bold">
+                {room.type}
+              </span>
+              {isFull && (
+                <span className="rounded-full bg-red-600 px-3 py-1 font-bold">
+                  FULL
+                </span>
+              )}
+              <span className="text-slate-400">
+                {participants.length} / 5
+              </span>
+              <span className="text-slate-500">•</span>
+              <span className="text-blue-300">
+                {getRemainingText(room.created_at)}
+              </span>
             </div>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={leaveRoom}
+              className="rounded-xl bg-slate-800 px-5 py-3 font-bold hover:bg-slate-700"
+            >
+              방 나가기
+            </button>
 
             {isOwner && (
               <button
                 onClick={deleteRoom}
-                className="rounded-xl bg-red-600 text-white px-4 py-2 text-sm font-bold hover:bg-red-700"
+                className="rounded-xl bg-red-600 px-5 py-3 font-bold hover:bg-red-700"
               >
                 방 삭제
               </button>
             )}
           </div>
-        </section>
+        </header>
 
-        <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
-          <label className="block text-sm text-zinc-600 mb-2">닉네임</label>
-
-          <div className="flex gap-2">
-            <input
-              className="flex-1 rounded-xl bg-zinc-50 border border-zinc-300 p-3 outline-none focus:border-blue-500"
-              placeholder="닉네임 입력"
-              value={nickname}
-              onChange={(e) => setNickname(e.target.value)}
-            />
-
-            <button
-              onClick={saveNickname}
-              className="rounded-xl bg-blue-600 text-white px-4 font-bold hover:bg-blue-700"
-            >
-              저장
-            </button>
-          </div>
-
-          <button
-            onClick={leaveRoom}
-            className="mt-3 w-full rounded-xl bg-zinc-100 py-3 font-bold hover:bg-zinc-200"
-          >
-            방 나가기
-          </button>
-        </section>
-
-        <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
-          <h2 className="font-bold mb-3">참가자</h2>
-
-          <div className="grid grid-cols-1 gap-2">
-            {sortedParticipants.length === 0 ? (
-              <p className="text-zinc-500 text-sm">참가자가 없습니다.</p>
-            ) : (
-              sortedParticipants.map((p) => {
-                const ownerMark =
-                  room.owner_key && p.visitor_key === getOwnerKey() ? " 👑" : "";
-
-                return (
-                  <div
-                    key={p.id}
-                    className="rounded-xl bg-zinc-50 border border-zinc-200 p-3"
-                  >
-                    <span className="font-bold">{p.nickname}</span>
-                    <span>{ownerMark}</span>
-                    <span className="ml-3 text-zinc-500 text-sm">
-                      {p.seat || "자리 미선택"}
-                    </span>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </section>
-
-        <section className="rounded-2xl bg-white border border-zinc-200 p-5 mb-5 shadow-sm">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold">자리 선택</h2>
-            {myParticipant?.seat && (
+        <div className="grid grid-cols-[260px_1fr_360px] gap-6">
+          <aside className="space-y-5">
+            <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
+              <h2 className="font-black mb-3">내 정보</h2>
+              <input
+                className="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="닉네임"
+              />
               <button
-                onClick={leaveSeat}
-                className="rounded-lg bg-zinc-100 px-3 py-2 text-sm font-bold hover:bg-zinc-200"
+                onClick={saveNickname}
+                className="mt-3 w-full rounded-xl bg-blue-600 py-3 font-bold hover:bg-blue-700"
               >
-                자리 해제
+                닉네임 저장
               </button>
-            )}
-          </div>
+            </section>
 
-          <div className="grid grid-cols-1 gap-2">
-            {seats.map((seat) => {
-              const person = participants.find((p) => p.seat === seat);
-              const isMine = person?.visitor_key === visitorKey;
+            <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
+              <h2 className="font-black mb-3">참가자</h2>
+              <div className="space-y-2">
+                {sortedParticipants.map((p) => {
+                  const ownerMark =
+                    p.visitor_key === room.owner_visitor_key ? "👑" : "";
 
-              return (
+                  return (
+                    <div
+                      key={p.id}
+                      className="rounded-2xl bg-slate-950 border border-slate-800 p-3"
+                    >
+                      <div className="font-bold">
+                        {ownerMark} {p.nickname}
+                      </div>
+                      <div className="text-sm text-slate-400">
+                        {p.seat || "자리 미선택"}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          </aside>
+
+          <section className="rounded-3xl bg-slate-900 border border-slate-800 p-6">
+            <div className="mb-5 flex items-center justify-between">
+              <h2 className="text-2xl font-black">Squad Position</h2>
+              {myParticipant?.seat && (
                 <button
-                  key={seat}
-                  onClick={() => selectSeat(seat)}
-                  className={`rounded-xl p-4 text-left border ${
-                    isMine
-                      ? "bg-blue-600 text-white border-blue-600"
-                      : person
-                      ? "bg-zinc-100 border-zinc-300 opacity-70"
-                      : "bg-white border-zinc-300 hover:bg-blue-50"
-                  }`}
+                  onClick={leaveSeat}
+                  className="rounded-xl bg-slate-800 px-4 py-2 font-bold hover:bg-slate-700"
                 >
-                  <span className="font-bold">{seat}</span>
-                  <span className="ml-4">
-                    {person ? person.nickname : "비어있음"}
-                  </span>
+                  자리 해제
                 </button>
-              );
-            })}
-          </div>
-        </section>
+              )}
+            </div>
 
-        <section className="rounded-2xl bg-white border border-zinc-200 p-5 shadow-sm">
-          <h2 className="font-bold mb-3">채팅</h2>
+            <div className="rounded-3xl bg-slate-950 border border-slate-800 p-6">
+              <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 p-5 text-center font-black text-xl">
+                BOSS AREA
+              </div>
 
-          <div className="h-80 overflow-y-auto rounded-xl bg-zinc-50 border border-zinc-200 p-4 mb-4 space-y-2">
-            {messages.length === 0 ? (
-              <p className="text-zinc-500 text-sm">아직 채팅이 없습니다.</p>
-            ) : (
-              messages.map((msg) => (
-                <div key={msg.id} className="rounded-xl bg-white border border-zinc-200 p-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="text-blue-600 text-sm font-bold">
-                      {msg.nickname}
-                    </p>
-                    <p className="text-xs text-zinc-400">
-                      {formatTime(msg.created_at)}
-                    </p>
+              <div className="grid grid-cols-2 gap-4">
+                {seats.slice(0, 4).map((seat) => {
+                  const person = participants.find((p) => p.seat === seat);
+                  const isMine = person?.visitor_key === visitorKey;
+
+                  return (
+                    <button
+                      key={seat}
+                      onClick={() => selectSeat(seat)}
+                      className={`rounded-2xl border p-6 text-left transition ${
+                        isMine
+                          ? "bg-blue-600 border-blue-400 text-white"
+                          : person
+                          ? "bg-slate-800 border-slate-700 opacity-70"
+                          : "bg-slate-900 border-slate-700 hover:border-blue-500 hover:bg-slate-800"
+                      }`}
+                    >
+                      <div className="text-2xl font-black">{seat}</div>
+                      <div className="mt-2 text-sm">
+                        {person ? person.nickname : "비어있음"}
+                      </div>
+                    </button>
+                  );
+                })}
+
+                {seats.slice(4).map((seat) => {
+                  const person = participants.find((p) => p.seat === seat);
+                  const isMine = person?.visitor_key === visitorKey;
+
+                  return (
+                    <button
+                      key={seat}
+                      onClick={() => selectSeat(seat)}
+                      className={`col-span-2 rounded-2xl border p-6 text-left transition ${
+                        isMine
+                          ? "bg-blue-600 border-blue-400 text-white"
+                          : person
+                          ? "bg-slate-800 border-slate-700 opacity-70"
+                          : "bg-slate-900 border-slate-700 hover:border-blue-500 hover:bg-slate-800"
+                      }`}
+                    >
+                      <div className="text-2xl font-black">{seat}</div>
+                      <div className="mt-2 text-sm">
+                        {person ? person.nickname : "비어있음"}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+
+          <aside className="rounded-3xl bg-slate-900 border border-slate-800 p-5 flex flex-col h-[720px]">
+            <h2 className="text-xl font-black mb-4">채팅</h2>
+
+            <div className="flex-1 overflow-y-auto rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-3">
+              {messages.length === 0 ? (
+                <p className="text-slate-500 text-sm">아직 채팅이 없습니다.</p>
+              ) : (
+                messages.map((msg) => (
+                  <div
+                    key={msg.id}
+                    className="rounded-2xl bg-slate-900 border border-slate-800 p-3"
+                  >
+                    <div className="flex justify-between gap-2">
+                      <p className="text-blue-400 text-sm font-bold">
+                        {msg.nickname}
+                      </p>
+                      <p className="text-xs text-slate-500">
+                        {formatTime(msg.created_at)}
+                      </p>
+                    </div>
+                    <p className="mt-1">{msg.message}</p>
                   </div>
-                  <p>{msg.message}</p>
-                </div>
-              ))
-            )}
-          </div>
+                ))
+              )}
+            </div>
 
-          <div className="flex gap-2">
-            <input
-              className="flex-1 rounded-xl bg-zinc-50 border border-zinc-300 p-3 outline-none focus:border-blue-500"
-              placeholder="메시지 입력"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") sendMessage();
-              }}
-            />
+            <div className="mt-4 flex gap-2">
+              <input
+                className="flex-1 rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
+                placeholder="메시지 입력"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") sendMessage();
+                }}
+              />
 
-            <button
-              onClick={sendMessage}
-              className="rounded-xl bg-blue-600 text-white px-5 font-bold hover:bg-blue-700"
-            >
-              전송
-            </button>
-          </div>
-        </section>
+              <button
+                onClick={sendMessage}
+                className="rounded-xl bg-blue-600 px-5 font-bold hover:bg-blue-700"
+              >
+                전송
+              </button>
+            </div>
+          </aside>
+        </div>
       </div>
     </main>
   );
