@@ -7,14 +7,14 @@ export const metadata: Metadata = {
   openGraph: {
     title: "뚜레 협동작전",
     description: "니케 협동작전 모집 사이트",
-    images: ["/og.png"],
+    images: ["/toast.png"],
     type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "뚜레 협동작전",
     description: "니케 협동작전 모집 사이트",
-    images: ["/og.png"],
+    images: ["/toast.png"],
   },
 };
 
