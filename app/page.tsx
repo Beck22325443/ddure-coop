@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabase";
@@ -106,6 +107,7 @@ export default function Home() {
       type: roomType,
       owner_key: getOwnerKey(),
       owner_visitor_key: getVisitorKey(),
+      notice: "",
     });
 
     setLoading(false);
@@ -131,7 +133,6 @@ export default function Home() {
     const saved = localStorage.getItem("ddure_nickname") || "";
     setNickname(saved);
     setNicknameReady(Boolean(saved));
-
     loadRooms();
 
     const timer = setInterval(() => {
@@ -158,81 +159,96 @@ export default function Home() {
 
   return (
     <main className="min-h-screen bg-slate-50 text-slate-900 p-8">
-      <div className="mx-auto max-w-5xl">
-        <header className="mb-8 rounded-3xl bg-white border border-slate-200 p-8 shadow-sm">
-          <p className="text-blue-600 font-bold mb-2">NIKKE CO-OP LOBBY</p>
-          <div className="flex items-end justify-between gap-6">
-            <div>
-              <h1 className="text-5xl font-black text-blue-600">DDURE COOP</h1>
-              <p className="text-slate-500 mt-3">
-                협동작전 방 생성, 자리 선택, 실시간 채팅을 한 곳에서.
-              </p>
-            </div>
-
-            <div className="min-w-72 rounded-2xl bg-slate-50 border border-slate-200 p-4">
-              <label className="block text-sm text-slate-600 mb-2">내 닉네임</label>
-              <div className="flex gap-2">
-                <input
-                  className="flex-1 rounded-xl bg-white border border-slate-300 p-3 outline-none focus:border-blue-500"
-                  value={nickname}
-                  onChange={(e) => setNickname(e.target.value)}
-                  placeholder="닉네임"
-                />
-                <button
-                  onClick={saveNickname}
-                  className="rounded-xl bg-blue-600 text-white px-4 font-bold hover:bg-blue-700"
-                >
-                  저장
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 mt-2">
-                {nicknameReady ? `현재 닉네임: ${nickname}` : "닉네임을 먼저 저장해줘."}
-              </p>
-            </div>
-          </div>
-        </header>
-
-        <div className="grid grid-cols-[360px_1fr] gap-6">
-          <section className="rounded-3xl bg-white border border-slate-200 p-6 shadow-sm h-fit">
-            <h2 className="text-xl font-black mb-5">작전 생성</h2>
-
-            <label className="block text-sm text-slate-600 mb-2">방 제목</label>
-            <input
-              className="w-full rounded-xl bg-slate-50 border border-slate-300 p-3 outline-none focus:border-blue-500"
-              placeholder="예: 10% 목표 같이 하실 분"
-              value={roomTitle}
-              onChange={(e) => setRoomTitle(e.target.value)}
-            />
-
-            <label className="block text-sm text-slate-600 mt-5 mb-2">방 종류</label>
-            <div className="grid grid-cols-3 gap-2">
-              {["10%방", "숫자단", "즐겜"].map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setRoomType(type)}
-                  className={`rounded-xl p-3 font-bold ${
-                    roomType === type
-                      ? "bg-blue-600 text-white"
-                      : "bg-slate-100 hover:bg-slate-200"
-                  }`}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
-
-            <button
-              onClick={createRoom}
-              disabled={loading}
-              className="mt-5 w-full rounded-xl bg-blue-600 text-white py-4 font-bold hover:bg-blue-700 disabled:opacity-50"
-            >
-              {loading ? "생성 중..." : "방 만들기"}
-            </button>
-
-            <p className="text-xs text-slate-500 mt-3">방은 생성 후 30분 뒤 자동 삭제됩니다.</p>
+      <div className="mx-auto max-w-6xl">
+        <header className="mb-8 grid grid-cols-[1fr_420px] gap-6">
+          <section className="rounded-[2rem] bg-white border border-slate-200 p-8 shadow-sm">
+            <p className="text-blue-600 font-black mb-2">NIKKE CO-OP LOBBY</p>
+            <h1 className="text-6xl font-black text-blue-600 tracking-tight">
+              DDURE COOP
+            </h1>
+            <p className="text-slate-500 mt-4 text-lg">
+              협동작전 방 생성, 자리 선택, 실시간 채팅을 한 곳에서.
+            </p>
           </section>
 
-          <section className="rounded-3xl bg-white border border-slate-200 p-6 shadow-sm">
+          <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
+            <label className="block text-sm text-slate-600 mb-2">내 닉네임</label>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 rounded-xl bg-slate-50 border border-slate-300 p-3 outline-none focus:border-blue-500"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                placeholder="닉네임"
+              />
+              <button
+                onClick={saveNickname}
+                className="rounded-xl bg-blue-600 text-white px-5 font-bold hover:bg-blue-700"
+              >
+                저장
+              </button>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              {nicknameReady ? `현재 닉네임: ${nickname}` : "닉네임을 먼저 저장해줘."}
+            </p>
+          </section>
+        </header>
+
+        <div className="grid grid-cols-[420px_1fr] gap-6">
+          <section className="space-y-6">
+            <div className="relative h-[330px] overflow-hidden rounded-[2rem] bg-gradient-to-br from-blue-100 to-white border border-blue-100 shadow-sm">
+              <div className="absolute inset-0 opacity-70 bg-[radial-gradient(circle_at_20%_20%,#bfdbfe_0,transparent_25%),radial-gradient(circle_at_80%_70%,#dbeafe_0,transparent_25%)]" />
+              <Image
+                src="/toast.png"
+                alt="Toast"
+                width={380}
+                height={380}
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 drop-shadow-2xl"
+              />
+            </div>
+
+            <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
+              <h2 className="text-xl font-black mb-5">작전 생성</h2>
+
+              <label className="block text-sm text-slate-600 mb-2">방 제목</label>
+              <input
+                className="w-full rounded-xl bg-slate-50 border border-slate-300 p-3 outline-none focus:border-blue-500"
+                placeholder="예: 10% 목표 같이 하실 분"
+                value={roomTitle}
+                onChange={(e) => setRoomTitle(e.target.value)}
+              />
+
+              <label className="block text-sm text-slate-600 mt-5 mb-2">방 종류</label>
+              <div className="grid grid-cols-3 gap-2">
+                {["10%방", "숫자단", "즐겜"].map((type) => (
+                  <button
+                    key={type}
+                    onClick={() => setRoomType(type)}
+                    className={`rounded-xl p-3 font-bold ${
+                      roomType === type
+                        ? "bg-blue-600 text-white"
+                        : "bg-slate-100 hover:bg-slate-200"
+                    }`}
+                  >
+                    {type}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                onClick={createRoom}
+                disabled={loading}
+                className="mt-5 w-full rounded-xl bg-blue-600 text-white py-4 font-bold hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loading ? "생성 중..." : "+ 방 만들기"}
+              </button>
+
+              <p className="text-xs text-slate-500 mt-3 text-center">
+                방은 생성 후 30분 뒤 자동 삭제됩니다.
+              </p>
+            </section>
+          </section>
+
+          <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-black">작전 목록</h2>
               <button
@@ -279,7 +295,7 @@ export default function Home() {
                     <Link
                       key={room.id}
                       href={`/room/${room.id}`}
-                      className="block rounded-2xl bg-slate-50 border border-slate-200 p-5 hover:bg-blue-50 hover:border-blue-200"
+                      className="block rounded-2xl bg-slate-50 border border-slate-200 p-5 hover:bg-blue-50 hover:border-blue-200 transition"
                     >
                       <div className="flex items-center justify-between gap-4">
                         <div>
@@ -292,7 +308,7 @@ export default function Home() {
                             )}
                           </div>
                           <p className="text-lg font-black">{room.title}</p>
-                          <p className="text-xs text-slate-500 mt-1">
+                          <p className="text-xs text-blue-600 mt-1">
                             {getRemainingText(room.created_at)}
                           </p>
                         </div>

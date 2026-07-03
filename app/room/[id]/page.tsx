@@ -9,6 +9,7 @@ type Room = {
   id: number;
   title: string;
   type: string;
+  notice: string | null;
   owner_key: string | null;
   owner_visitor_key: string | null;
   created_at: string;
@@ -73,6 +74,8 @@ export default function RoomPage() {
   const [message, setMessage] = useState("");
   const [visitorKey, setVisitorKey] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [editTitle, setEditTitle] = useState("");
+  const [editNotice, setEditNotice] = useState("");
   const [, setTick] = useState(0);
 
   const myParticipant = participants.find((p) => p.visitor_key === visitorKey);
@@ -81,11 +84,13 @@ export default function RoomPage() {
 
   const sortedParticipants = useMemo(() => {
     return [...participants].sort((a, b) => {
+      if (a.visitor_key === room?.owner_visitor_key) return -1;
+      if (b.visitor_key === room?.owner_visitor_key) return 1;
       if (a.seat && !b.seat) return -1;
       if (!a.seat && b.seat) return 1;
       return a.created_at.localeCompare(b.created_at);
     });
-  }, [participants]);
+  }, [participants, room?.owner_visitor_key]);
 
   async function cleanupRoom() {
     await supabase.from("participants").delete().eq("room_id", roomId);
@@ -96,7 +101,7 @@ export default function RoomPage() {
   async function loadRoom() {
     const { data, error } = await supabase
       .from("rooms")
-      .select("id,title,type,owner_key,owner_visitor_key,created_at")
+      .select("id,title,type,notice,owner_key,owner_visitor_key,created_at")
       .eq("id", roomId)
       .maybeSingle();
 
@@ -117,6 +122,8 @@ export default function RoomPage() {
     }
 
     setRoom(data);
+    setEditTitle(data.title);
+    setEditNotice(data.notice || "");
   }
 
   async function loadMessages() {
@@ -181,6 +188,60 @@ export default function RoomPage() {
     }
 
     loadParticipants();
+  }
+
+  async function updateRoomInfo() {
+    if (!isOwner) {
+      alert("방장만 수정할 수 있어.");
+      return;
+    }
+
+    if (!editTitle.trim()) {
+      alert("방 제목은 비울 수 없어.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("rooms")
+      .update({
+        title: editTitle.trim(),
+        notice: editNotice.trim(),
+      })
+      .eq("id", roomId);
+
+    if (error) {
+      alert("방 정보 수정 실패: " + error.message);
+      return;
+    }
+
+    await loadRoom();
+  }
+
+  async function kickParticipant(participant: Participant) {
+    if (!isOwner) {
+      alert("방장만 강퇴할 수 있어.");
+      return;
+    }
+
+    if (participant.visitor_key === visitorKey) {
+      alert("자기 자신은 강퇴할 수 없어.");
+      return;
+    }
+
+    if (!confirm(`${participant.nickname}님을 강퇴할까요?`)) return;
+
+    const { error } = await supabase
+      .from("participants")
+      .delete()
+      .eq("room_id", roomId)
+      .eq("visitor_key", participant.visitor_key);
+
+    if (error) {
+      alert("강퇴 실패: " + error.message);
+      return;
+    }
+
+    await loadParticipants();
   }
 
   async function selectSeat(seat: string) {
@@ -317,16 +378,16 @@ export default function RoomPage() {
       .subscribe();
 
     const roomChannel = supabase
-      .channel(`room-delete-${roomId}`)
+      .channel(`room-room-${roomId}`)
       .on(
         "postgres_changes",
         {
-          event: "DELETE",
+          event: "*",
           schema: "public",
           table: "rooms",
           filter: `id=eq.${roomId}`,
         },
-        () => router.push("/")
+        () => loadRoom()
       )
       .subscribe();
 
@@ -379,9 +440,7 @@ export default function RoomPage() {
                   FULL
                 </span>
               )}
-              <span className="text-slate-400">
-                {participants.length} / 5
-              </span>
+              <span className="text-slate-400">{participants.length} / 5</span>
               <span className="text-slate-500">•</span>
               <span className="text-blue-300">
                 {getRemainingText(room.created_at)}
@@ -408,7 +467,14 @@ export default function RoomPage() {
           </div>
         </header>
 
-        <div className="grid grid-cols-[260px_1fr_360px] gap-6">
+        {room.notice && (
+          <section className="mb-6 rounded-3xl bg-blue-950 border border-blue-800 p-5">
+            <p className="text-blue-300 text-sm font-bold mb-1">📢 공지사항</p>
+            <p className="text-white font-bold">{room.notice}</p>
+          </section>
+        )}
+
+        <div className="grid grid-cols-[300px_1fr_380px] gap-6">
           <aside className="space-y-5">
             <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
               <h2 className="font-black mb-3">내 정보</h2>
@@ -426,23 +492,69 @@ export default function RoomPage() {
               </button>
             </section>
 
+            {isOwner && (
+              <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
+                <h2 className="font-black mb-3">방장 관리</h2>
+
+                <label className="block text-sm text-slate-400 mb-2">
+                  방 제목 수정
+                </label>
+                <input
+                  className="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 mb-3 outline-none focus:border-blue-500"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                />
+
+                <label className="block text-sm text-slate-400 mb-2">
+                  공지사항
+                </label>
+                <textarea
+                  className="w-full min-h-24 rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
+                  value={editNotice}
+                  onChange={(e) => setEditNotice(e.target.value)}
+                  placeholder="공지사항 입력"
+                />
+
+                <button
+                  onClick={updateRoomInfo}
+                  className="mt-3 w-full rounded-xl bg-blue-600 py-3 font-bold hover:bg-blue-700"
+                >
+                  방 정보 저장
+                </button>
+              </section>
+            )}
+
             <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
               <h2 className="font-black mb-3">참가자</h2>
               <div className="space-y-2">
                 {sortedParticipants.map((p) => {
                   const ownerMark =
-                    p.visitor_key === room.owner_visitor_key ? "👑" : "";
+                    p.visitor_key === room.owner_visitor_key ? "👑 " : "";
 
                   return (
                     <div
                       key={p.id}
                       className="rounded-2xl bg-slate-950 border border-slate-800 p-3"
                     >
-                      <div className="font-bold">
-                        {ownerMark} {p.nickname}
-                      </div>
-                      <div className="text-sm text-slate-400">
-                        {p.seat || "자리 미선택"}
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="font-bold">
+                            {ownerMark}
+                            {p.nickname}
+                          </div>
+                          <div className="text-sm text-slate-400">
+                            {p.seat || "자리 미선택"}
+                          </div>
+                        </div>
+
+                        {isOwner && p.visitor_key !== visitorKey && (
+                          <button
+                            onClick={() => kickParticipant(p)}
+                            className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold hover:bg-red-700"
+                          >
+                            강퇴
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
