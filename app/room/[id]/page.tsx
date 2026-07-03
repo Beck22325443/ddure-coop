@@ -481,7 +481,7 @@ setEditNotice((current) => {
           </section>
         )}
 
-        <div className="grid grid-cols-[300px_1fr_380px] gap-6">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[300px_1fr_380px]">
           <aside className="space-y-5">
             <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
               <h2 className="font-black mb-3">내 정보</h2>
@@ -640,7 +640,7 @@ setEditNotice((current) => {
             </div>
           </section>
 
-          <aside className="rounded-3xl bg-slate-900 border border-slate-800 p-5 flex flex-col h-[720px]">
+          <aside className="rounded-3xl bg-slate-900 border border-slate-800 p-5 flex flex-col h-[520px] xl:h-[720px]">
             <h2 className="text-xl font-black mb-4">채팅</h2>
 
             <div className="flex-1 overflow-y-auto rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-3">
