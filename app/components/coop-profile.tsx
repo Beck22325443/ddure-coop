@@ -48,8 +48,8 @@ export function NikkeSummary({ value }: { value?: NikkeChoices | null }) {
 export function LevelBadge({ level }: { level: number | null }) {
   if (level === null || level < 1) return null;
   const text = `싱크로 ${level}`;
-  if (level < 200 || level >= 700) return <span className="inline-flex shrink-0 items-center" title={text}>
-    <Image src={level < 200 ? "/chick.png" : "/jige.png"} alt={`${text} · ${level < 200 ? "병아리" : "지게"}`} width={36} height={36} unoptimized className="h-9 w-9 object-contain" />
+  if (level < 300 || level >= 700) return <span className="inline-flex shrink-0 items-center" title={text}>
+    <Image src={level < 300 ? "/chick.png" : "/jige.png"} alt={`${text} · ${level < 300 ? "병아리" : "지게"}`} width={36} height={36} unoptimized className="h-9 w-9 object-contain" />
   </span>;
-  return <span title={text} aria-label={text} className={`inline-block h-3 w-3 shrink-0 rounded-full ${level < 400 ? "bg-green-500" : "bg-red-500"}`} />;
+  return <span title={text} aria-label={text} className="inline-block h-3 w-3 shrink-0 rounded-full bg-green-500" />;
 }
