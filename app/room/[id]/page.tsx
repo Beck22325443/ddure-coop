@@ -198,7 +198,10 @@ export default function RoomPage() {
         <Link href="/" className="text-blue-600">← 로비로 돌아가기</Link>
         <h1 className="mt-3 text-3xl font-black">{room.title}</h1>
         <p className="mt-2 text-slate-500">참여 {people.length}/5 · 대기 {queueStatus ? `${queueStatus.waiting_count}명` : "확인 중"}</p>
-        {room.notice && <p className="mt-4 rounded-xl bg-blue-50 p-4">공지: {room.notice}</p>}
+        {room.notice?.trim() && <section aria-labelledby="room-notice-title" className="mt-5 rounded-2xl border-2 border-blue-300 bg-blue-50 p-5 md:p-7">
+          <h2 id="room-notice-title" className="mb-3 text-lg font-black text-blue-700">📢 방장 공지</h2>
+          <p className="whitespace-pre-wrap break-words text-xl font-bold leading-relaxed text-slate-900 md:text-2xl">{room.notice}</p>
+        </section>}
       </header>
       {error && <p className="rounded-xl bg-red-50 p-3 text-red-600">{error}</p>}
       <div className="grid gap-5 lg:grid-cols-[300px_1fr_350px]">
@@ -221,7 +224,7 @@ export default function RoomPage() {
           {isOwner && <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">방장 관리</h2>
             <input className="mb-2 w-full rounded-xl border p-3" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="방 제목" />
-            <textarea className="mb-2 w-full rounded-xl border p-3" value={editNotice} onChange={e => setEditNotice(e.target.value)} placeholder="공지사항" />
+            <textarea rows={5} className="mb-2 w-full resize-y rounded-xl border p-3 leading-relaxed" value={editNotice} onChange={e => setEditNotice(e.target.value)} placeholder="공지사항 (Enter로 줄바꿈)" />
             <button disabled={busy} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white" onClick={() => void run("update_coop_room", { p_room_id: roomId, p_title: editTitle, p_notice: editNotice })}>정보 수정</button>
             <button disabled={busy} className="mt-3 w-full rounded-xl bg-red-600 p-3 font-bold text-white" onClick={() => { if (confirm("방과 대기열, 채팅을 모두 삭제할까요?")) void run("delete_coop_room", { p_room_id: roomId }, () => router.push("/")); }}>방 삭제</button>
           </section>}
@@ -245,15 +248,15 @@ export default function RoomPage() {
             <h2 className="text-xl font-black">실시간 채팅</h2>
             <button type="button" aria-expanded={chatOpen} aria-controls="room-chat"
               className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold"
-              onClick={() => setChatOpen(open => !open)}>{chatOpen ? "채팅 숨기기" : "채팅 보기"}</button>
+              onClick={() => setChatOpen(open => !open)}>{chatOpen ? "내용 숨기기" : "내용 보기"}</button>
           </div>
-          {chatOpen && <div id="room-chat" className="flex min-h-0 flex-1 flex-col">
+          <div className="flex min-h-0 flex-1 flex-col">
           {chatError && <p className="mb-2 text-sm text-red-600">{chatError}</p>}
-          {isMember ? <><div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
+          {isMember ? <><div id="room-chat" hidden={!chatOpen} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
             {messages.length === 0 && <p className="text-sm text-slate-500">아직 메시지가 없습니다.</p>}
             {messages.map(m => <div key={m.id} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><b className="text-sm text-blue-600">{m.nickname}</b><small className="text-slate-400">{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</small></div><p className="mt-1 break-words">{m.message}</p></div>)}
           </div><div className="mt-3 flex gap-2"><input className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy} className="rounded-xl bg-blue-600 px-4 font-bold text-white" onClick={send}>전송</button></div></> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
-          </div>}
+          </div>
         </aside>
       </div>
     </div>
