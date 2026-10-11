@@ -2,356 +2,111 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Room = {
-  id: number;
-  title: string;
-  type: string;
-  created_at: string;
-  participant_count: number;
-};
-
-const roomTypes = ["전체", "10%방", "숫자단", "즐겜"];
-
-function getOwnerKey() {
-  let key = localStorage.getItem("ddure_owner_key");
-  if (!key) {
-    key = crypto.randomUUID();
-    localStorage.setItem("ddure_owner_key", key);
-  }
-  return key;
-}
-
-function getVisitorKey() {
-  let key = localStorage.getItem("ddure_visitor_key");
-  if (!key) {
-    key = crypto.randomUUID();
-    localStorage.setItem("ddure_visitor_key", key);
-  }
-  return key;
-}
-
-function getRemainingText(createdAt: string) {
-  const diff = new Date(createdAt).getTime() + 30 * 60 * 1000 - Date.now();
-  if (diff <= 0) return "만료됨";
-  const min = Math.floor(diff / 1000 / 60);
-  const sec = Math.floor((diff / 1000) % 60);
-  return `${min}:${String(sec).padStart(2, "0")} 남음`;
-}
+type Room = { id: number; title: string; notice: string | null };
 
 export default function Home() {
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [roomTitle, setRoomTitle] = useState("");
-  const [roomType, setRoomType] = useState("10%방");
-  const [filterType, setFilterType] = useState("전체");
-  const [search, setSearch] = useState("");
+  const [ready, setReady] = useState(false);
+  const [room, setRoom] = useState<Room | null>(null);
   const [nickname, setNickname] = useState("");
-  const [nicknameReady, setNicknameReady] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [onlineCount, setOnlineCount] = useState(0);
-  const [, setTick] = useState(0);
+  const [level, setLevel] = useState("");
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(0);
+  const [error, setError] = useState("");
 
-  async function deleteOldRooms() {
-    const limit = new Date(Date.now() - 30 * 60 * 1000).toISOString();
-    const { data } = await supabase.from("rooms").select("id").lt("created_at", limit);
-    const ids = data?.map((r) => r.id) || [];
-    if (ids.length === 0) return;
-
-    await supabase.from("participants").delete().in("room_id", ids);
-    await supabase.from("messages").delete().in("room_id", ids);
-    await supabase.from("rooms").delete().in("id", ids);
+  async function loadRoom() {
+    const { data, error: err } = await supabase.from("rooms")
+      .select("id,title,notice").order("id", { ascending: true }).limit(1);
+    if (err) setError(err.message);
+    else { setRoom(data?.[0] ?? null); setError(""); }
   }
 
-  async function loadRooms() {
-    await deleteOldRooms();
+  useEffect(() => {
+    let active = true;
+    setNickname(localStorage.getItem("ddure_nickname") || "");
+    setLevel(localStorage.getItem("ddure_synchro_level") || "");
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const result = session ? null : await supabase.auth.signInAnonymously();
+      if (!active) return;
+      if (result?.error) { setError("익명 로그인 실패: " + result.error.message); return; }
+      setReady(true);
+      await loadRoom();
+    })();
+    const timer = setInterval(loadRoom, 5000);
+    const channel = supabase.channel("ddure-lobby-presence")
+      .on("presence", { event: "sync" }, () => {
+        const state = channel.presenceState();
+        setOnline(Object.values(state).reduce((sum, entries) => sum + entries.length, 0));
+      })
+      .subscribe(async status => {
+        if (status === "SUBSCRIBED") await channel.track({ at: Date.now() });
+      });
+    return () => { active = false; clearInterval(timer); void supabase.removeChannel(channel); };
+  }, []);
 
-    const { data, error } = await supabase
-      .from("rooms_with_count")
-      .select("id,title,type,created_at,participant_count")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      alert("방 목록 불러오기 실패: " + error.message);
-      return;
+  function saveProfile() {
+    const n = nickname.trim();
+    const l = Number(level);
+    if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
+      alert("닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
     }
-
-    setRooms((data || []) as Room[]);
-  }
-
-  function saveNickname() {
-    if (!nickname.trim()) {
-      alert("닉네임을 입력해줘.");
-      return;
-    }
-
-    localStorage.setItem("ddure_nickname", nickname.trim());
-    setNicknameReady(true);
+    localStorage.setItem("ddure_nickname", n);
+    localStorage.setItem("ddure_synchro_level", String(l));
+    return true;
   }
 
   async function createRoom() {
-    if (!nicknameReady) {
-      alert("닉네임을 먼저 저장해줘.");
-      return;
-    }
-
-    if (!roomTitle.trim()) {
-      alert("방 제목을 입력해줘.");
-      return;
-    }
-
-    setLoading(true);
-
-    const { error } = await supabase.from("rooms").insert({
-      title: roomTitle.trim(),
-      type: roomType,
-      owner_key: getOwnerKey(),
-      owner_visitor_key: getVisitorKey(),
-      notice: "",
+    if (!ready || !saveProfile()) return;
+    if (!title.trim()) { alert("방 제목을 입력해 주세요."); return; }
+    setBusy(true);
+    const { data, error: err } = await supabase.rpc("create_coop_room", {
+      p_title: title.trim(), p_type: "즐겜", p_nickname: nickname.trim(), p_level: Number(level),
     });
-
-    setLoading(false);
-
-    if (error) {
-      alert("방 만들기 실패: " + error.message);
-      return;
-    }
-
-    setRoomTitle("");
-    loadRooms();
+    setBusy(false);
+    if (err) { alert(err.message); await loadRoom(); return; }
+    window.location.href = `/room/${data}`;
   }
 
-  const filteredRooms = useMemo(() => {
-    return rooms.filter((room) => {
-      const typeOk = filterType === "전체" || room.type === filterType;
-      const searchOk = room.title.toLowerCase().includes(search.toLowerCase());
-      return typeOk && searchOk;
-    });
-  }, [rooms, filterType, search]);
-
-  useEffect(() => {
-    const saved = localStorage.getItem("ddure_nickname") || "";
-    setNickname(saved);
-    setNicknameReady(Boolean(saved));
-    loadRooms();
-
-    const timer = setInterval(() => {
-      setTick((v) => v + 1);
-      loadRooms();
-    }, 10000);
-
-    const roomsChannel = supabase
-      .channel("rooms-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "rooms" }, loadRooms)
-      .subscribe();
-
-    const participantsChannel = supabase
-      .channel("participants-realtime")
-      .on("postgres_changes", { event: "*", schema: "public", table: "participants" }, loadRooms)
-      .subscribe();
-
-    const onlineChannel = supabase
-      .channel("site-online", {
-        config: {
-          presence: {
-            key: getVisitorKey(),
-          },
-        },
-      })
-      .on("presence", { event: "sync" }, () => {
-        const state = onlineChannel.presenceState();
-        const count = (Object.values(state) as Array<Array<unknown>>).reduce(
-          (total, users) => total + users.length,
-          0
-        );
-        setOnlineCount(count);
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED") {
-          await onlineChannel.track({
-            online_at: new Date().toISOString(),
-          });
-        }
-      });
-
-    return () => {
-      clearInterval(timer);
-      supabase.removeChannel(roomsChannel);
-      supabase.removeChannel(participantsChannel);
-      supabase.removeChannel(onlineChannel);
-    };
-  }, []);
-
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900 p-8">
-      <div className="mx-auto max-w-6xl">
-        <header className="mb-6 grid grid-cols-1 gap-4 lg:grid-cols-[1fr_420px] lg:gap-6">
-          <section className="rounded-[2rem] bg-white border border-slate-200 p-8 shadow-sm">
-            <p className="text-blue-600 font-black mb-2">NIKKE CO-OP LOBBY</p>
-            <h1 className="text-6xl font-black text-blue-600 tracking-tight">
-              DDURE COOP
-            </h1>
-            <p className="text-slate-500 mt-4 text-lg">
-              협동작전 방 생성, 자리 선택, 실시간 채팅을 한 곳에서.
-            </p>
-
-            <div className="mt-5 inline-flex rounded-full bg-green-100 px-4 py-2 text-sm font-black text-green-700">
-              🟢 현재 접속자 {onlineCount}명
-            </div>
+    <main className="min-h-screen bg-slate-50 p-4 text-slate-900 md:p-8">
+      <div className="mx-auto max-w-5xl space-y-6">
+        <header className="grid gap-5 md:grid-cols-2">
+          <section className="rounded-3xl border bg-white p-7 shadow-sm">
+            <p className="font-bold text-blue-600">NIKKE CO-OP LOBBY</p>
+            <h1 className="mt-2 text-4xl font-black text-blue-600 md:text-5xl">DDURE COOP</h1>
+            <p className="mt-3 text-slate-500">한 개의 작전방 · 선착순 대기 · 방장 승인</p>
+            <p className="mt-5 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">🟢 현재 접속 {online}명</p>
           </section>
-
-          <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
-            <label className="block text-sm text-slate-600 mb-2">내 닉네임</label>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 rounded-xl bg-slate-50 border border-slate-300 p-3 outline-none focus:border-blue-500"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                placeholder="닉네임"
-              />
-              <button
-                onClick={saveNickname}
-                className="rounded-xl bg-blue-600 text-white px-5 font-bold hover:bg-blue-700"
-              >
-                저장
-              </button>
-            </div>
-            <p className="text-xs text-slate-500 mt-2">
-              {nicknameReady ? `현재 닉네임: ${nickname}` : "닉네임을 먼저 저장해줘."}
-            </p>
+          <section className="rounded-3xl border bg-white p-6 shadow-sm">
+            <h2 className="mb-4 text-xl font-black">내 정보</h2>
+            <label className="text-sm">닉네임</label>
+            <input className="mb-3 mt-1 w-full rounded-xl border p-3" maxLength={40} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="닉네임" />
+            <label className="text-sm">싱크로 레벨</label>
+            <input className="mb-3 mt-1 w-full rounded-xl border p-3" type="number" min={1} max={10000} value={level} onChange={e => setLevel(e.target.value)} placeholder="예: 450" />
+            <button onClick={() => { if (saveProfile()) alert("저장했습니다."); }} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white">정보 저장</button>
           </section>
         </header>
-
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[420px_1fr]">
-          <section className="space-y-6">
-            <div className="relative h-[330px] overflow-hidden rounded-[2rem] bg-gradient-to-br from-blue-100 to-white border border-blue-100 shadow-sm">
-              <div className="absolute inset-0 opacity-70 bg-[radial-gradient(circle_at_20%_20%,#bfdbfe_0,transparent_25%),radial-gradient(circle_at_80%_70%,#dbeafe_0,transparent_25%)]" />
-              <Image
-                src="/toast.png"
-                alt="Toast"
-                width={380}
-                height={380}
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 drop-shadow-2xl"
-              />
+        {error && <p className="rounded-xl bg-red-50 p-4 text-red-700">{error}</p>}
+        <div className="grid gap-6 md:grid-cols-[330px_1fr]">
+          <div className="space-y-5">
+            <div className="relative h-64 overflow-hidden rounded-3xl border bg-blue-50">
+              <Image src="/toast.png" alt="DDURE COOP" fill className="object-contain p-5" />
             </div>
-
-            <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
-              <h2 className="text-xl font-black mb-5">작전 생성</h2>
-
-              <label className="block text-sm text-slate-600 mb-2">방 제목</label>
-              <input
-                className="w-full rounded-xl bg-slate-50 border border-slate-300 p-3 outline-none focus:border-blue-500"
-                placeholder="예: 10% 목표 같이 하실 분"
-                value={roomTitle}
-                onChange={(e) => setRoomTitle(e.target.value)}
-              />
-
-              <label className="block text-sm text-slate-600 mt-5 mb-2">방 종류</label>
-              <div className="grid grid-cols-3 gap-2">
-                {["10%방", "숫자단", "즐겜"].map((type) => (
-                  <button
-                    key={type}
-                    onClick={() => setRoomType(type)}
-                    className={`rounded-xl p-3 font-bold ${
-                      roomType === type
-                        ? "bg-blue-600 text-white"
-                        : "bg-slate-100 hover:bg-slate-200"
-                    }`}
-                  >
-                    {type}
-                  </button>
-                ))}
-              </div>
-
-              <button
-                onClick={createRoom}
-                disabled={loading}
-                className="mt-5 w-full rounded-xl bg-blue-600 text-white py-4 font-bold hover:bg-blue-700 disabled:opacity-50"
-              >
-                {loading ? "생성 중..." : "+ 방 만들기"}
-              </button>
-
-              <p className="text-xs text-slate-500 mt-3 text-center">
-                방은 생성 후 30분 뒤 자동 삭제됩니다.
-              </p>
-            </section>
-          </section>
-
-          <section className="rounded-[2rem] bg-white border border-slate-200 p-6 shadow-sm">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-xl font-black">작전 목록</h2>
-              <button
-                onClick={loadRooms}
-                className="rounded-xl bg-slate-100 px-4 py-2 text-sm font-bold hover:bg-slate-200"
-              >
-                새로고침
-              </button>
-            </div>
-
-            <input
-              className="w-full rounded-xl bg-slate-50 border border-slate-300 p-3 mb-3 outline-none focus:border-blue-500"
-              placeholder="방 제목 검색"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-
-            <div className="grid grid-cols-4 gap-2 mb-5">
-              {roomTypes.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => setFilterType(type)}
-                  className={`rounded-xl p-3 text-sm font-bold ${
-                    filterType === type
-                      ? "bg-blue-600 text-white"
-                      : "bg-slate-100 hover:bg-slate-200"
-                  }`}
-                >
-                  {type}
-                </button>
-              ))}
-            </div>
-
-            {filteredRooms.length === 0 ? (
-              <div className="rounded-2xl bg-slate-50 border border-slate-200 p-8 text-center text-slate-500">
-                표시할 방이 없습니다.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {filteredRooms.map((room) => {
-                  const isFull = room.participant_count >= 5;
-
-                  return (
-                    <Link
-                      key={room.id}
-                      href={`/room/${room.id}`}
-                      className="block rounded-2xl bg-slate-50 border border-slate-200 p-5 hover:bg-blue-50 hover:border-blue-200 transition"
-                    >
-                      <div className="flex items-center justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-2 mb-1">
-                            <p className="text-blue-600 text-sm font-black">{room.type}</p>
-                            {isFull && (
-                              <span className="rounded-full bg-red-100 text-red-600 px-2 py-1 text-xs font-black">
-                                FULL
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-lg font-black">{room.title}</p>
-                          <p className="text-xs text-blue-600 mt-1">
-                            {getRemainingText(room.created_at)}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl bg-white border border-slate-300 px-4 py-3 text-sm font-black">
-                          {room.participant_count} / 5
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
+            {!room && ready && <section className="rounded-3xl border bg-white p-6 shadow-sm">
+              <h2 className="mb-4 text-xl font-black">작전방 생성</h2>
+              <input className="mb-3 w-full rounded-xl border p-3" value={title} onChange={e => setTitle(e.target.value)} placeholder="방 제목" maxLength={100} />
+              <button disabled={busy} onClick={createRoom} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white disabled:opacity-50">{busy ? "생성 중..." : "+ 방 만들기"}</button>
+            </section>}
+          </div>
+          <section className="rounded-3xl border bg-white p-6 shadow-sm">
+            <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-black">현재 작전방</h2><button onClick={loadRoom} className="rounded-lg bg-slate-100 px-3 py-2 text-sm">새로고침</button></div>
+            {!ready ? <p>연결 중...</p> : room ? <Link href={`/room/${room.id}`} onClick={e => { if (!saveProfile()) e.preventDefault(); }} className="block rounded-2xl border border-blue-200 bg-blue-50 p-6 hover:bg-blue-100">
+              <h3 className="mt-2 text-2xl font-black">{room.title}</h3><p className="mt-3 text-slate-600">입장 대기 및 신청하기 →</p>
+            </Link> : <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">현재 개설된 방이 없습니다.</p>}
           </section>
         </div>
       </div>

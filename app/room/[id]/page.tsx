@@ -2,691 +2,167 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-type Room = {
-  id: number;
-  title: string;
-  type: string;
-  notice: string | null;
-  owner_key: string | null;
-  owner_visitor_key: string | null;
-  created_at: string;
-};
-
-type Message = {
-  id: number;
-  room_id: number;
-  nickname: string;
-  message: string;
-  created_at: string;
-};
-
-type Participant = {
-  id: number;
-  room_id: number;
-  nickname: string;
-  seat: string | null;
-  visitor_key: string | null;
-  created_at: string;
-};
-
-const seats = ["B1", "B2", "B3", "B4", "B5"];
-
-function getVisitorKey() {
-  let key = localStorage.getItem("ddure_visitor_key");
-  if (!key) {
-    key = crypto.randomUUID();
-    localStorage.setItem("ddure_visitor_key", key);
-  }
-  return key;
-}
-
-function formatTime(date: string) {
-  return new Date(date).toLocaleTimeString("ko-KR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function getRemainingMs(createdAt: string) {
-  return new Date(createdAt).getTime() + 30 * 60 * 1000 - Date.now();
-}
-
-function getRemainingText(createdAt: string) {
-  const diff = getRemainingMs(createdAt);
-  if (diff <= 0) return "만료됨";
-  const min = Math.floor(diff / 1000 / 60);
-  const sec = Math.floor((diff / 1000) % 60);
-  return `${min}:${String(sec).padStart(2, "0")} 남음`;
-}
+type Room = { id: number; title: string; notice: string | null; owner_user_id: string };
+type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null };
+type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string };
+type Msg = { id: number; nickname: string; message: string; created_at: string };
 
 export default function RoomPage() {
-  const params = useParams();
+  const roomId = Number(useParams().id);
   const router = useRouter();
-  const roomId = Number(params.id);
-
+  const [userId, setUserId] = useState("");
   const [room, setRoom] = useState<Room | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [participants, setParticipants] = useState<Participant[]>([]);
+  const [people, setPeople] = useState<Person[]>([]);
+  const [queue, setQueue] = useState<Queue[]>([]);
+  const [messages, setMessages] = useState<Msg[]>([]);
   const [nickname, setNickname] = useState("");
-  const [message, setMessage] = useState("");
-  const [visitorKey, setVisitorKey] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+  const [level, setLevel] = useState("");
+  const [text, setText] = useState("");
   const [editTitle, setEditTitle] = useState("");
   const [editNotice, setEditNotice] = useState("");
-  const [, setTick] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(false);
 
-  const myParticipant = participants.find((p) => p.visitor_key === visitorKey);
-  const isOwner = Boolean(room?.owner_visitor_key && room.owner_visitor_key === visitorKey);
-  const isFull = participants.length >= 5;
+  const isOwner = !!userId && room?.owner_user_id === userId;
+  const isMember = people.some(p => p.user_id === userId);
+  const myQueue = queue.find(q => q.user_id === userId);
+  const waiting = queue.filter(q => q.status === "waiting");
 
-  const sortedParticipants = useMemo(() => {
-    return [...participants].sort((a, b) => {
-      if (a.visitor_key === room?.owner_visitor_key) return -1;
-      if (b.visitor_key === room?.owner_visitor_key) return 1;
-      if (a.seat && !b.seat) return -1;
-      if (!a.seat && b.seat) return 1;
-      return a.created_at.localeCompare(b.created_at);
-    });
-  }, [participants, room?.owner_visitor_key]);
-
-  async function cleanupRoom() {
-    await supabase.from("participants").delete().eq("room_id", roomId);
-    await supabase.from("messages").delete().eq("room_id", roomId);
-    await supabase.from("rooms").delete().eq("id", roomId);
-  }
-
-  async function loadRoom() {
-    const { data, error } = await supabase
-      .from("rooms")
-      .select("id,title,type,notice,owner_key,owner_visitor_key,created_at")
-      .eq("id", roomId)
-      .maybeSingle();
-
-    if (error) {
-      setErrorMessage(error.message);
-      return;
-    }
-
-    if (!data) {
-      setErrorMessage("해당 방이 없습니다.");
-      return;
-    }
-
-    if (getRemainingMs(data.created_at) <= 0) {
-      await cleanupRoom();
-      router.push("/");
-      return;
-    }
-setRoom(data);
-
-setEditTitle((current) => {
-  if (current) return current;
-  return data.title;
-});
-
-setEditNotice((current) => {
-  if (current) return current;
-  return data.notice || "";
-});
-  }
-
-  async function loadMessages() {
-    const { data } = await supabase
-      .from("messages")
-      .select("id,room_id,nickname,message,created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true });
-
-    setMessages(data || []);
-  }
-
-  async function loadParticipants() {
-    const { data } = await supabase
-      .from("participants")
-      .select("id,room_id,nickname,seat,visitor_key,created_at")
-      .eq("room_id", roomId)
-      .order("created_at", { ascending: true });
-
-    setParticipants(data || []);
-  }
-
-  async function autoJoinRoom(key: string) {
-    const savedName = localStorage.getItem("ddure_nickname") || "익명";
-
-    const { error } = await supabase.from("participants").upsert(
-      {
-        room_id: roomId,
-        visitor_key: key,
-        nickname: savedName,
-        seat: null,
-      },
-      { onConflict: "room_id,visitor_key" }
-    );
-
-    if (error) {
-      alert("자동 입장 실패: " + error.message);
-      return;
-    }
-
-    setNickname(savedName);
-    loadParticipants();
-  }
-
-  async function saveNickname() {
-    if (!nickname.trim()) {
-      alert("닉네임을 입력해줘.");
-      return;
-    }
-
-    localStorage.setItem("ddure_nickname", nickname.trim());
-
-    const { error } = await supabase
-      .from("participants")
-      .update({ nickname: nickname.trim() })
-      .eq("room_id", roomId)
-      .eq("visitor_key", visitorKey);
-
-    if (error) {
-      alert("닉네임 저장 실패: " + error.message);
-      return;
-    }
-
-    loadParticipants();
-  }
-
-  async function updateRoomInfo() {
-    if (!isOwner) {
-      alert("방장만 수정할 수 있어.");
-      return;
-    }
-
-    if (!editTitle.trim()) {
-      alert("방 제목은 비울 수 없어.");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("rooms")
-      .update({
-        title: editTitle.trim(),
-        notice: editNotice.trim(),
-      })
-      .eq("id", roomId);
-
-    if (error) {
-      alert("방 정보 수정 실패: " + error.message);
-      return;
-    }
-
-    await loadRoom();
-  }
-
-  async function kickParticipant(participant: Participant) {
-    if (!isOwner) {
-      alert("방장만 강퇴할 수 있어.");
-      return;
-    }
-
-    if (participant.visitor_key === visitorKey) {
-      alert("자기 자신은 강퇴할 수 없어.");
-      return;
-    }
-
-    if (!confirm(`${participant.nickname}님을 강퇴할까요?`)) return;
-
-    const { error } = await supabase
-      .from("participants")
-      .delete()
-      .eq("room_id", roomId)
-      .eq("visitor_key", participant.visitor_key);
-
-    if (error) {
-      alert("강퇴 실패: " + error.message);
-      return;
-    }
-
-    await loadParticipants();
-  }
-
-  async function selectSeat(seat: string) {
-    if (!myParticipant) {
-      alert("입장 처리 중이야. 잠깐만 기다려줘.");
-      return;
-    }
-
-    const taken = participants.find((p) => p.seat === seat);
-
-    if (taken && taken.visitor_key !== visitorKey) {
-      alert("이미 다른 사람이 선택한 자리야.");
-      return;
-    }
-
-    const { error } = await supabase
-      .from("participants")
-      .update({ seat })
-      .eq("room_id", roomId)
-      .eq("visitor_key", visitorKey);
-
-    if (error) {
-      alert("자리 선택 실패: " + error.message);
-      return;
-    }
-
-    loadParticipants();
-  }
-
-  async function leaveSeat() {
-    const { error } = await supabase
-      .from("participants")
-      .update({ seat: null })
-      .eq("room_id", roomId)
-      .eq("visitor_key", visitorKey);
-
-    if (error) {
-      alert("자리 해제 실패: " + error.message);
-      return;
-    }
-
-    loadParticipants();
-  }
-
-  async function leaveRoom() {
-    await supabase
-      .from("participants")
-      .delete()
-      .eq("room_id", roomId)
-      .eq("visitor_key", visitorKey);
-
-    router.push("/");
-  }
-
-  async function sendMessage() {
-    if (!myParticipant) {
-      alert("입장 처리 중이야. 잠깐만 기다려줘.");
-      return;
-    }
-
-    if (!message.trim()) return;
-
-    const name = myParticipant.nickname || nickname.trim() || "익명";
-
-    const { error } = await supabase.from("messages").insert({
-      room_id: roomId,
-      nickname: name,
-      message: message.trim(),
-    });
-
-    if (error) {
-      alert("채팅 전송 실패: " + error.message);
-      return;
-    }
-
-    setMessage("");
-    loadMessages();
-  }
-
-  async function deleteRoom() {
-    if (!isOwner) {
-      alert("방장만 삭제할 수 있어.");
-      return;
-    }
-
-    if (!confirm("정말 이 방을 삭제할까요?")) return;
-
-    await cleanupRoom();
-    router.push("/");
-  }
-
-  useEffect(() => {
-    if (!roomId) return;
-
-    const key = getVisitorKey();
-    setVisitorKey(key);
-
-    loadRoom();
-    loadMessages();
-    loadParticipants();
-    autoJoinRoom(key);
-
-    const timer = setInterval(() => {
-      setTick((v) => v + 1);
-      loadRoom();
-    }, 1000);
-
-    const participantChannel = supabase
-      .channel(`participants-room-${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "participants",
-          filter: `room_id=eq.${roomId}`,
-        },
-        () => loadParticipants()
-      )
-      .subscribe();
-
-    const messageChannel = supabase
-      .channel(`messages-room-${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "messages",
-          filter: `room_id=eq.${roomId}`,
-        },
-        () => loadMessages()
-      )
-      .subscribe();
-
-    const roomChannel = supabase
-      .channel(`room-room-${roomId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "rooms",
-          filter: `id=eq.${roomId}`,
-        },
-        () => loadRoom()
-      )
-      .subscribe();
-
-    return () => {
-      clearInterval(timer);
-      supabase.removeChannel(participantChannel);
-      supabase.removeChannel(messageChannel);
-      supabase.removeChannel(roomChannel);
-    };
+  const refresh = useCallback(async () => {
+    if (!Number.isInteger(roomId) || roomId <= 0) return;
+    const [r, p, q] = await Promise.all([
+      supabase.from("rooms").select("id,title,notice,owner_user_id").eq("id", roomId).maybeSingle(),
+      supabase.from("participants").select("id,user_id,nickname,synchro_level").eq("room_id", roomId).order("created_at"),
+      supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at").eq("room_id", roomId).order("id"),
+    ]);
+    if (r.error) setError(r.error.message);
+    else if (!r.data) setError("방이 삭제되었거나 존재하지 않습니다.");
+    else { setRoom(r.data); setError(""); setEditTitle(old => old || r.data.title); setEditNotice(old => old || r.data.notice || ""); }
+    if (!p.error) setPeople(p.data || []);
+    if (!q.error) setQueue(q.data || []);
+    setLoaded(true);
   }, [roomId]);
 
-  if (errorMessage) {
-    return (
-      <main className="min-h-screen bg-slate-950 text-white p-8">
-        <Link href="/" className="text-slate-400">
-          ← 로비로 돌아가기
-        </Link>
-        <div className="mt-6 rounded-2xl bg-red-950 border border-red-800 p-5">
-          {errorMessage}
-        </div>
-      </main>
-    );
+  const refreshMessages = useCallback(async () => {
+    const { data, error: err } = await supabase.from("messages")
+      .select("id,nickname,message,created_at").eq("room_id", roomId).order("created_at").limit(200);
+    if (!err) setMessages(data || []);
+  }, [roomId]);
+
+  useEffect(() => {
+    let active = true;
+    setNickname(localStorage.getItem("ddure_nickname") || "");
+    setLevel(localStorage.getItem("ddure_synchro_level") || "");
+    (async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      const login = session ? null : await supabase.auth.signInAnonymously();
+      if (!active) return;
+      if (login?.error) { setError(login.error.message); setLoaded(true); return; }
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!active) return;
+      setUserId(user?.id || "");
+      await refresh();
+      await refreshMessages();
+    })();
+    const timer = setInterval(() => { void refresh(); void refreshMessages(); }, 3000);
+    return () => { active = false; clearInterval(timer); };
+  }, [refresh, refreshMessages]);
+
+  async function run(fn: string, args: Record<string, unknown>, success?: () => void) {
+    if (busy) return;
+    setBusy(true);
+    const { error: err } = await supabase.rpc(fn, args);
+    setBusy(false);
+    if (err) { alert(err.message); return; }
+    await refresh();
+    await refreshMessages();
+    success?.();
   }
 
-  if (!room) {
-    return (
-      <main className="min-h-screen bg-slate-950 text-white p-8">
-        방 불러오는 중...
-      </main>
-    );
+  function validProfile() {
+    const n = nickname.trim(), l = Number(level);
+    if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
+      alert("닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
+    }
+    localStorage.setItem("ddure_nickname", n);
+    localStorage.setItem("ddure_synchro_level", String(l));
+    return true;
   }
 
-  return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 p-6">
-      <div className="mx-auto max-w-7xl">
-        <header className="mb-6 flex items-center justify-between">
-          <div>
-            <Link href="/" className="text-slate-400 hover:text-white">
-              ← 로비로 돌아가기
-            </Link>
-            <h1 className="mt-3 text-4xl font-black text-white">
-              {room.title}
-            </h1>
-            <div className="mt-2 flex items-center gap-2 text-sm">
-              <span className="rounded-full bg-blue-600 px-3 py-1 font-bold">
-                {room.type}
-              </span>
-              {isFull && (
-                <span className="rounded-full bg-red-600 px-3 py-1 font-bold">
-                  FULL
-                </span>
-              )}
-              <span className="text-slate-400">{participants.length} / 5</span>
-              <span className="text-slate-500">•</span>
-              <span className="text-blue-300">
-                {getRemainingText(room.created_at)}
-              </span>
-            </div>
-          </div>
+  async function apply() {
+    if (!validProfile()) return;
+    await run("join_coop_queue", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level) });
+  }
 
-          <div className="flex gap-2">
-            <button
-              onClick={leaveRoom}
-              className="rounded-xl bg-slate-800 px-5 py-3 font-bold hover:bg-slate-700"
-            >
-              방 나가기
-            </button>
+  async function send() {
+    if (!text.trim()) return;
+    await run("send_coop_message", { p_room_id: roomId, p_message: text.trim() }, () => setText(""));
+  }
 
-            {isOwner && (
-              <button
-                onClick={deleteRoom}
-                className="rounded-xl bg-red-600 px-5 py-3 font-bold hover:bg-red-700"
-              >
-                방 삭제
-              </button>
-            )}
-          </div>
-        </header>
+  if (!loaded) return <main className="min-h-screen bg-slate-50 p-8">불러오는 중...</main>;
+  if (error && !room) return <main className="min-h-screen bg-slate-50 p-8"><Link href="/" className="text-blue-600">← 로비</Link><p className="mt-6 text-red-600">{error}</p></main>;
+  if (!room) return <main className="p-8">방을 찾을 수 없습니다.</main>;
 
-        {room.notice && (
-          <section className="mb-6 rounded-3xl bg-blue-950 border border-blue-800 p-5">
-            <p className="text-blue-300 text-sm font-bold mb-1">📢 공지사항</p>
-            <p className="text-white font-bold">{room.notice}</p>
+  return <main className="min-h-screen bg-slate-50 p-4 text-slate-900 md:p-8">
+    <div className="mx-auto max-w-6xl space-y-5">
+      <header className="rounded-3xl border bg-white p-6 shadow-sm">
+        <Link href="/" className="text-blue-600">← 로비로 돌아가기</Link>
+        <h1 className="mt-3 text-3xl font-black">{room.title}</h1>
+        <p className="mt-2 text-slate-500">참가 {people.length}/5 · 대기 {waiting.length}명</p>
+        {room.notice && <p className="mt-4 rounded-xl bg-blue-50 p-4">📢 {room.notice}</p>}
+      </header>
+      {error && <p className="rounded-xl bg-red-50 p-3 text-red-600">{error}</p>}
+      <div className="grid gap-5 lg:grid-cols-[300px_1fr_350px]">
+        <aside className="space-y-5">
+          <section className="rounded-3xl border bg-white p-5 shadow-sm">
+            <h2 className="mb-3 text-lg font-black">내 정보</h2>
+            <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="닉네임" />
+            <input className="mb-3 w-full rounded-xl border p-3" value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={10000} placeholder="싱크로 레벨" />
+            <button className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={() => { if (validProfile()) alert("저장했습니다. 대기 신청 시 반영됩니다."); }}>정보 저장</button>
+            <p className="mt-3 text-sm text-slate-500">{isOwner ? "👑 방장" : isMember ? "✅ 입장 완료" : myQueue?.status === "waiting" ? "⏳ 승인 대기 중" : "아직 입장하지 않았습니다."}</p>
           </section>
-        )}
-
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[300px_1fr_380px]">
-          <aside className="space-y-5">
-            <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
-              <h2 className="font-black mb-3">내 정보</h2>
-              <input
-                className="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                placeholder="닉네임"
-              />
-              <button
-                onClick={saveNickname}
-                className="mt-3 w-full rounded-xl bg-blue-600 py-3 font-bold hover:bg-blue-700"
-              >
-                닉네임 저장
-              </button>
-            </section>
-
-            {isOwner && (
-              <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
-                <h2 className="font-black mb-3">방장 관리</h2>
-
-                <label className="block text-sm text-slate-400 mb-2">
-                  방 제목 수정
-                </label>
-                <input
-                  className="w-full rounded-xl bg-slate-950 border border-slate-700 p-3 mb-3 outline-none focus:border-blue-500"
-                  value={editTitle}
-                  onChange={(e) => setEditTitle(e.target.value)}
-                />
-
-                <label className="block text-sm text-slate-400 mb-2">
-                  공지사항
-                </label>
-                <textarea
-                  className="w-full min-h-24 rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
-                  value={editNotice}
-                  onChange={(e) => setEditNotice(e.target.value)}
-                  placeholder="공지사항 입력"
-                />
-
-                <button
-                  onClick={updateRoomInfo}
-                  className="mt-3 w-full rounded-xl bg-blue-600 py-3 font-bold hover:bg-blue-700"
-                >
-                  방 정보 저장
-                </button>
-              </section>
-            )}
-
-            <section className="rounded-3xl bg-slate-900 border border-slate-800 p-5">
-              <h2 className="font-black mb-3">참가자</h2>
-              <div className="space-y-2">
-                {sortedParticipants.map((p) => {
-                  const ownerMark =
-                    p.visitor_key === room.owner_visitor_key ? "👑 " : "";
-
-                  return (
-                    <div
-                      key={p.id}
-                      className="rounded-2xl bg-slate-950 border border-slate-800 p-3"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <div className="font-bold">
-                            {ownerMark}
-                            {p.nickname}
-                          </div>
-                          <div className="text-sm text-slate-400">
-                            {p.seat || "자리 미선택"}
-                          </div>
-                        </div>
-
-                        {isOwner && p.visitor_key !== visitorKey && (
-                          <button
-                            onClick={() => kickParticipant(p)}
-                            className="rounded-lg bg-red-600 px-3 py-2 text-xs font-bold hover:bg-red-700"
-                          >
-                            강퇴
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-          </aside>
-
-          <section className="rounded-3xl bg-slate-900 border border-slate-800 p-6">
-            <div className="mb-5 flex items-center justify-between">
-              <h2 className="text-2xl font-black">Squad Position</h2>
-              {myParticipant?.seat && (
-                <button
-                  onClick={leaveSeat}
-                  className="rounded-xl bg-slate-800 px-4 py-2 font-bold hover:bg-slate-700"
-                >
-                  자리 해제
-                </button>
-              )}
-            </div>
-
-            <div className="rounded-3xl bg-slate-950 border border-slate-800 p-6">
-              <div className="mb-6 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-500 p-5 text-center font-black text-xl">
-                BOSS AREA
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                {seats.slice(0, 4).map((seat) => {
-                  const person = participants.find((p) => p.seat === seat);
-                  const isMine = person?.visitor_key === visitorKey;
-
-                  return (
-                    <button
-                      key={seat}
-                      onClick={() => selectSeat(seat)}
-                      className={`rounded-2xl border p-6 text-left transition ${
-                        isMine
-                          ? "bg-blue-600 border-blue-400 text-white"
-                          : person
-                          ? "bg-slate-800 border-slate-700 opacity-70"
-                          : "bg-slate-900 border-slate-700 hover:border-blue-500 hover:bg-slate-800"
-                      }`}
-                    >
-                      <div className="text-2xl font-black">{seat}</div>
-                      <div className="mt-2 text-sm">
-                        {person ? person.nickname : "비어있음"}
-                      </div>
-                    </button>
-                  );
-                })}
-
-                {seats.slice(4).map((seat) => {
-                  const person = participants.find((p) => p.seat === seat);
-                  const isMine = person?.visitor_key === visitorKey;
-
-                  return (
-                    <button
-                      key={seat}
-                      onClick={() => selectSeat(seat)}
-                      className={`col-span-2 rounded-2xl border p-6 text-left transition ${
-                        isMine
-                          ? "bg-blue-600 border-blue-400 text-white"
-                          : person
-                          ? "bg-slate-800 border-slate-700 opacity-70"
-                          : "bg-slate-900 border-slate-700 hover:border-blue-500 hover:bg-slate-800"
-                      }`}
-                    >
-                      <div className="text-2xl font-black">{seat}</div>
-                      <div className="mt-2 text-sm">
-                        {person ? person.nickname : "비어있음"}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+          <section className="rounded-3xl border bg-white p-5 shadow-sm">
+            <h2 className="mb-3 text-lg font-black">참가자 ({people.length}/5)</h2>
+            {people.map(p => <div key={p.id} className="mb-2 flex items-center justify-between rounded-xl bg-slate-50 p-3">
+              <div><p className="font-bold">{p.user_id === room.owner_user_id ? "👑 " : ""}{p.nickname}</p><p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p></div>
+              {isOwner && p.user_id !== userId && <button disabled={busy} className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700" onClick={() => { if (confirm(`${p.nickname}님을 강퇴할까요?`)) void run("kick_coop_user", { p_room_id: roomId, p_user_id: p.user_id }); }}>강퇴</button>}
+            </div>)}
+            {isMember && !isOwner && <button disabled={busy} className="mt-2 w-full rounded-xl bg-slate-200 p-3" onClick={() => { if (confirm("방에서 나가시겠습니까?")) void run("leave_coop_room", { p_room_id: roomId }); }}>방 나가기</button>}
           </section>
-
-          <aside className="rounded-3xl bg-slate-900 border border-slate-800 p-5 flex flex-col h-[520px] xl:h-[720px]">
-            <h2 className="text-xl font-black mb-4">채팅</h2>
-
-            <div className="flex-1 overflow-y-auto rounded-2xl bg-slate-950 border border-slate-800 p-4 space-y-3">
-              {messages.length === 0 ? (
-                <p className="text-slate-500 text-sm">아직 채팅이 없습니다.</p>
-              ) : (
-                messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className="rounded-2xl bg-slate-900 border border-slate-800 p-3"
-                  >
-                    <div className="flex justify-between gap-2">
-                      <p className="text-blue-400 text-sm font-bold">
-                        {msg.nickname}
-                      </p>
-                      <p className="text-xs text-slate-500">
-                        {formatTime(msg.created_at)}
-                      </p>
-                    </div>
-                    <p className="mt-1">{msg.message}</p>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="mt-4 flex gap-2">
-              <input
-                className="flex-1 rounded-xl bg-slate-950 border border-slate-700 p-3 outline-none focus:border-blue-500"
-                placeholder="메시지 입력"
-                value={message}
-                onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") sendMessage();
-                }}
-              />
-
-              <button
-                onClick={sendMessage}
-                className="rounded-xl bg-blue-600 px-5 font-bold hover:bg-blue-700"
-              >
-                전송
-              </button>
-            </div>
-          </aside>
-        </div>
+          {isOwner && <section className="rounded-3xl border bg-white p-5 shadow-sm">
+            <h2 className="mb-3 text-lg font-black">방장 관리</h2>
+            <input className="mb-2 w-full rounded-xl border p-3" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="방 제목" />
+            <textarea className="mb-2 w-full rounded-xl border p-3" value={editNotice} onChange={e => setEditNotice(e.target.value)} placeholder="공지사항" />
+            <button disabled={busy} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white" onClick={() => void run("update_coop_room", { p_room_id: roomId, p_title: editTitle, p_notice: editNotice })}>정보 수정</button>
+            <button disabled={busy} className="mt-3 w-full rounded-xl bg-red-600 p-3 font-bold text-white" onClick={() => { if (confirm("방과 대기열, 채팅을 모두 삭제할까요?")) void run("delete_coop_room", { p_room_id: roomId }, () => router.push("/")); }}>방 삭제</button>
+          </section>}
+        </aside>
+        <section className="rounded-3xl border bg-white p-5 shadow-sm">
+          <h2 className="mb-2 text-xl font-black">선착순 대기열</h2>
+          <p className="mb-5 text-sm text-slate-500">신청 순서대로 표시됩니다. 방장이 원하는 신청자를 승인합니다.</p>
+          {!isMember && myQueue?.status !== "waiting" && <button disabled={busy || !userId} onClick={apply} className="mb-5 w-full rounded-xl bg-blue-600 p-4 font-bold text-white disabled:opacity-50">대기 신청하기</button>}
+          {!isMember && myQueue?.status === "waiting" && <div className="mb-5 rounded-xl bg-blue-50 p-4">
+            <p className="font-bold text-blue-700">현재 대기 순번: {waiting.findIndex(q => q.id === myQueue.id) + 1}번</p>
+            <button disabled={busy} className="mt-2 rounded-lg bg-slate-200 px-4 py-2" onClick={() => void run("cancel_coop_queue", { p_room_id: roomId })}>대기 취소</button>
+          </div>}
+          {waiting.length === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기자가 없습니다.</p> : isOwner ? waiting.map((q, i) => <div key={q.id} className="mb-3 rounded-xl border p-4">
+            <p className="font-bold">{i + 1}번 · {q.nickname}</p><p className="mb-3 text-sm text-slate-500">싱크로 {q.synchro_level}</p>
+            <div className="flex gap-2"><button disabled={busy || people.length >= 5} className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-40" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "approve" })}>승인</button>
+            <button disabled={busy} className="rounded-lg bg-red-100 px-4 py-2 text-red-700" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "reject" })}>거절</button></div>
+          </div>) : <p className="rounded-xl bg-slate-50 p-5 text-center text-slate-500">현재 {waiting.length}명이 대기 중입니다. 개인정보 보호를 위해 다른 신청자의 정보는 표시하지 않습니다.</p>}
+        </section>
+        <aside className="flex h-[540px] flex-col rounded-3xl border bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-xl font-black">실시간 채팅</h2>
+          {isMember ? <><div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
+            {messages.length === 0 && <p className="text-sm text-slate-500">아직 메시지가 없습니다.</p>}
+            {messages.map(m => <div key={m.id} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><b className="text-sm text-blue-600">{m.nickname}</b><small className="text-slate-400">{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</small></div><p className="mt-1 break-words">{m.message}</p></div>)}
+          </div><div className="mt-3 flex gap-2"><input className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy} className="rounded-xl bg-blue-600 px-4 font-bold text-white" onClick={send}>전송</button></div></> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
+        </aside>
       </div>
-    </main>
-  );
+    </div>
+  </main>;
 }
