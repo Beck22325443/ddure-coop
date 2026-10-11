@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+import { NikkeFields, NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
+
 type Room = { id: number; title: string; notice: string | null; owner_user_id: string };
-type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number };
-type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string };
+type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number; is_paused: boolean; nikke_owned: NikkeChoices | null };
+type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string; nikke_owned: NikkeChoices | null };
 type QueueStatus = { waiting_count: number; my_position: number | null };
 
 type Msg = { id: number; nickname: string; message: string; created_at: string };
@@ -17,6 +19,7 @@ export default function RoomPage() {
   const router = useRouter();
   const [userId, setUserId] = useState("");
   const [room, setRoom] = useState<Room | null>(null);
+  const [nikkes, setNikkes] = useState<NikkeChoices>(emptyNikkes);
   const [people, setPeople] = useState<Person[]>([]);
   const [queue, setQueue] = useState<Queue[]>([]);
   const [adminIds, setAdminIds] = useState<string[]>([]);
@@ -36,6 +39,9 @@ export default function RoomPage() {
   const refreshId = useRef(0);
   const running = useRef(false);
 
+  const activePeople = people.filter(p => !p.is_paused);
+  const pausedPeople = people.filter(p => p.is_paused);
+  const myPerson = people.find(p => p.user_id === userId);
   const isOwner = !!userId && room?.owner_user_id === userId;
   const isMember = people.some(p => p.user_id === userId);
   const isCoAdmin = !!userId && isMember && adminIds.includes(userId);
@@ -52,8 +58,8 @@ export default function RoomPage() {
     try {
       const [r, p, q, summary, admins] = await Promise.all([
         supabase.from("rooms").select("id,title,notice,owner_user_id").eq("id", roomId).maybeSingle(),
-        supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count").eq("room_id", roomId).order("created_at"),
-        supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at")
+        supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count,is_paused,nikke_owned").eq("room_id", roomId).order("created_at"),
+        supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at,nikke_owned")
           .eq("room_id", roomId).eq("status", "waiting")
           .order("created_at", { ascending: true, nullsFirst: false }).order("id"),
         supabase.rpc("get_coop_queue_status_v2", { p_room_id: roomId }),
@@ -103,7 +109,7 @@ export default function RoomPage() {
     try {
       const { data, error: err } = await supabase.from("messages")
         .select("id,nickname,message,created_at").eq("room_id", roomId)
-        .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(3);
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1);
       if (err) { setChatError(err.message); return; }
       setMessages((data || []).slice().reverse());
       setChatError("");
@@ -117,6 +123,7 @@ export default function RoomPage() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoaded(false);
     setRoom(null); setPeople([]); setQueue([]); setAdminIds([]); setQueueStatus(null); setMessages([]);
+    setNikkes(readNikkes());
     setNickname(localStorage.getItem("ddure_nickname") || "");
     setLevel(localStorage.getItem("ddure_synchro_level") || "");
     async function poll() {
@@ -179,6 +186,8 @@ export default function RoomPage() {
     if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
       alert("인게임닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
     }
+    if (!hasAllChoices(nikkes)) { alert("니케 4종의 보유·미보유를 모두 선택해 주세요."); return false; }
+    localStorage.setItem("ddure_nikkes_v3", JSON.stringify(nikkes));
     localStorage.setItem("ddure_nickname", n);
     localStorage.setItem("ddure_synchro_level", String(l));
     return true;
@@ -186,7 +195,12 @@ export default function RoomPage() {
 
   async function apply() {
     if (!validProfile()) return;
-    await run("join_coop_queue", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level) });
+    await run("join_coop_queue_v3", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level), p_nikkes: nikkes });
+  }
+
+  async function saveProfile() {
+    if (!validProfile()) return;
+    await run("save_coop_profile_v3", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level), p_nikkes: nikkes }, () => alert("저장했습니다. 신청 정보도 반영되었습니다."));
   }
 
   async function send() {
@@ -203,7 +217,7 @@ export default function RoomPage() {
       <header className="rounded-3xl border bg-white p-6 shadow-sm">
         <Link href="/" className="text-blue-600">← 로비로 돌아가기</Link>
         <h1 className="mt-3 text-3xl font-black">{room.title}</h1>
-        <p className="mt-2 text-slate-500">참여 {people.length}/5 · 대기 {queueStatus ? `${queueStatus.waiting_count}명` : "확인 중"}</p>
+        <p className="mt-2 text-slate-500">참여 {activePeople.length}/5 · 잠시 제외 {pausedPeople.length}명 · 대기 {queueStatus ? `${queueStatus.waiting_count}명` : "확인 중"}</p>
         {room.notice?.trim() && <section aria-labelledby="room-notice-title" className="mt-5 rounded-2xl border-2 border-blue-300 bg-blue-50 p-5 md:p-7">
           <h2 id="room-notice-title" className="mb-3 text-lg font-black text-blue-700">📢 방장 공지</h2>
           <p className="whitespace-pre-wrap break-words text-xl font-bold leading-relaxed text-slate-900 md:text-2xl">{room.notice}</p>
@@ -219,22 +233,39 @@ export default function RoomPage() {
             </div>
             <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
             <input className="mb-3 w-full rounded-xl border p-3" value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={10000} placeholder="싱크로 레벨" />
-            <button className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={() => { if (validProfile()) alert("저장했습니다. 대기 신청 시 반영됩니다."); }}>정보 저장</button>
-            <p className="mt-3 text-sm text-slate-500">{isOwner ? "방장" : isCoAdmin ? "공동 방장" : isMember ? "입장 완료" : myQueue?.status === "waiting" ? "승인 대기 중" : "아직 입장하지 않았습니다."}</p>
+            <NikkeFields value={nikkes} onChange={setNikkes} />
+            <button disabled={busy || !userId} className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={saveProfile}>정보 저장</button>
+            <p className="mt-3 text-sm text-slate-500">{isOwner ? "방장" : isCoAdmin ? "공동 방장" : myPerson?.is_paused ? "잠시 제외 중 · 방장이 다시 투입할 수 있습니다." : isMember ? "입장 완료" : myQueue?.status === "waiting" ? "승인 대기 중" : "아직 입장하지 않았습니다."}</p>
           </section>
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-lg font-black">참여자 ({people.length}/5)</h2>
-            {people.map(p => <div key={p.id} className="mb-2 flex items-center justify-between gap-2 rounded-xl bg-slate-50 p-3">
+            <h2 className="mb-3 text-lg font-black">참여자 ({activePeople.length}/5)</h2>
+            {activePeople.map(p => <div key={p.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3">
               <div className="min-w-0">
-                <p className="break-words font-bold">{p.user_id === room.owner_user_id ? "[방장] " : adminIds.includes(p.user_id) ? "[공동 방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p>
-                <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p>
+                <p className="flex flex-wrap items-center gap-2 break-words font-bold"><LevelBadge level={p.synchro_level} />{p.user_id === room.owner_user_id ? "[방장] " : adminIds.includes(p.user_id) ? "[공동 방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p>
+                <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p><NikkeSummary value={p.nikke_owned} />
               </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
+                {canManage && <button disabled={busy} className="rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900" onClick={() => void run("set_coop_paused_v3", { p_room_id: roomId, p_user_id: p.user_id, p_paused: true })}>잠시 제외</button>}
                 {isOwner && p.user_id !== room.owner_user_id && <button disabled={busy} className={`rounded-lg px-3 py-2 text-sm font-bold ${adminIds.includes(p.user_id) ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-700"}`} onClick={() => { const enabled = !adminIds.includes(p.user_id); if (confirm(`${p.nickname}님에게 공동 방장 권한을 ${enabled ? "부여" : "해제"}할까요?`)) void run("set_coop_admin", { p_room_id: roomId, p_user_id: p.user_id, p_enabled: enabled }); }}>{adminIds.includes(p.user_id) ? "권한 해제" : "관리자 지정"}</button>}
                 {canManage && p.user_id !== userId && p.user_id !== room.owner_user_id && <button disabled={busy} className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700" onClick={() => { if (confirm(`${p.nickname}님을 강퇴할까요?`)) void run("kick_coop_user", { p_room_id: roomId, p_user_id: p.user_id }); }}>강퇴</button>}
               </div>
             </div>)}
             {isMember && !isOwner && <button disabled={busy} className="mt-2 w-full rounded-xl bg-slate-200 p-3" onClick={() => { if (confirm("방에서 나가시겠습니까?")) void run("leave_coop_room", { p_room_id: roomId }); }}>방 나가기</button>}
+          </section>
+          <section className="rounded-3xl border border-amber-200 bg-amber-50 p-5 shadow-sm">
+            <h2 className="mb-2 text-lg font-black">잠시 제외 ({pausedPeople.length}명)</h2>
+            <p className="mb-3 text-sm text-slate-600">정원 5명에 포함되지 않습니다. 빈자리가 있으면 방장이 다시 투입할 수 있습니다.</p>
+            {pausedPeople.length === 0 && <p className="text-sm text-slate-500">잠시 제외된 인원이 없습니다.</p>}
+            {pausedPeople.map(p => <div key={p.id} className="mb-3 rounded-xl bg-white p-3">
+              <p className="flex flex-wrap items-center gap-2 font-bold"><LevelBadge level={p.synchro_level} />{p.user_id === room.owner_user_id ? "[방장] " : adminIds.includes(p.user_id) ? "[공동 방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p>
+              <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p>
+              <NikkeSummary value={p.nikke_owned} />
+              {canManage && <div className="mt-3 flex flex-wrap gap-2">
+                <button disabled={busy || activePeople.length >= 5} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-40" onClick={() => void run("set_coop_paused_v3", { p_room_id: roomId, p_user_id: p.user_id, p_paused: false })}>다시 투입</button>
+                {isOwner && p.user_id !== room.owner_user_id && <button disabled={busy} className="rounded-lg bg-slate-100 px-3 py-2 text-sm" onClick={() => { const enabled = !adminIds.includes(p.user_id); if (confirm(`${p.nickname}님의 권한을 ${enabled ? "부여" : "해제"}할까요?`)) void run("set_coop_admin", { p_room_id: roomId, p_user_id: p.user_id, p_enabled: enabled }); }}>{adminIds.includes(p.user_id) ? "권한 해제" : "관리자 지정"}</button>}
+                {p.user_id !== userId && p.user_id !== room.owner_user_id && <button disabled={busy} className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700" onClick={() => { if (confirm(`${p.nickname}님을 강퇴할까요?`)) void run("kick_coop_user", { p_room_id: roomId, p_user_id: p.user_id }); }}>강퇴</button>}
+              </div>}
+            </div>)}
           </section>
           {canManage && <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">방장 관리{isCoAdmin ? " (공동 방장)" : ""}</h2>
@@ -250,11 +281,14 @@ export default function RoomPage() {
           {!isMember && !isOwner && myQueue?.status !== "waiting" && <button disabled={busy || !userId} onClick={apply} className="mb-5 w-full rounded-xl bg-blue-600 p-4 font-bold text-white disabled:opacity-50">대기 신청하기</button>}
           {!isMember && !isOwner && myQueue?.status === "waiting" && <div className="mb-5 rounded-xl bg-blue-50 p-4">
             <p className="font-bold text-blue-700">현재 대기 순번: {queueStatus?.my_position ? `${queueStatus.my_position}번` : "확인 중"}</p>
+            <p className="mt-2 flex items-center gap-2 font-bold">{myQueue.nickname}<LevelBadge level={myQueue.synchro_level} /></p>
+            <NikkeSummary value={myQueue.nikke_owned} />
+            {(!myQueue.nikke_owned || !hasAllChoices(myQueue.nikke_owned)) && <p className="mt-2 text-sm text-red-600">내 정보에서 니케 보유 여부를 선택하고 저장해 주세요. 대기 순서는 유지됩니다.</p>}
             <button disabled={busy} className="mt-2 rounded-lg bg-slate-200 px-4 py-2" onClick={() => void run("cancel_coop_queue", { p_room_id: roomId })}>대기 취소</button>
           </div>}
           {queueStatus === null ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기 현황을 확인하고 있습니다.</p> : queueStatus.waiting_count === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기자가 없습니다.</p> : canManage ? waiting.map((q, i) => <div key={q.id} className="mb-3 rounded-xl border p-4">
-            <p className="font-bold">{i + 1}번 · {q.nickname}</p><p className="mb-3 text-sm text-slate-500">싱크로 {q.synchro_level}</p>
-            <div className="flex gap-2"><button disabled={busy || people.length >= 5} className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-40" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "approve" })}>승인</button>
+            <p className="flex flex-wrap items-center gap-2 font-bold">{i + 1}번 · {q.nickname}<LevelBadge level={q.synchro_level} /></p><p className="text-sm text-slate-500">싱크로 {q.synchro_level}</p><NikkeSummary value={q.nikke_owned} /><div className="mb-3" />
+            <div className="flex gap-2"><button disabled={busy || activePeople.length >= 5 || !q.nikke_owned || !hasAllChoices(q.nikke_owned)} className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-40" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "approve" })}>승인</button>
             <button disabled={busy} className="rounded-lg bg-red-100 px-4 py-2 text-red-700" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "reject" })}>거절</button></div>
           </div>) : <p className="rounded-xl bg-slate-50 p-5 text-center text-slate-500">현재 {queueStatus.waiting_count}명이 대기 중입니다. 다른 신청자의 정보는 방장 및 공동 방장에게만 표시됩니다.</p>}
         </section>
@@ -265,9 +299,10 @@ export default function RoomPage() {
               className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold"
               onClick={() => setChatOpen(open => !open)}>{chatOpen ? "내용 숨기기" : "내용 보기"}</button>
           </div>
+          <p className="mb-3 text-xs text-slate-500">최신 메시지 1개만 표시됩니다.</p>
           <div className="flex min-h-0 flex-1 flex-col">
           {chatError && <p className="mb-2 text-sm text-red-600">{chatError}</p>}
-          {isMember ? <><div id="room-chat" hidden={!chatOpen} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
+          {isMember ? <><div id="room-chat" hidden={!chatOpen} className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
             {messages.length === 0 && <p className="text-sm text-slate-500">아직 메시지가 없습니다.</p>}
             {messages.map(m => <div key={m.id} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><b className="text-sm text-blue-600">{m.nickname}</b><small className="text-slate-400">{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</small></div><p className="mt-1 break-words">{m.message}</p></div>)}
           </div>{canManage ? <div className="mt-3 flex gap-2"><input type="password" autoComplete="off" spellCheck={false} aria-label="방장 채팅 입력" className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy || !text.trim()} className="rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-50" onClick={send}>전송</button></div> : <p className="mt-3 text-sm text-slate-500">방장 또는 공동 방장만 메시지를 보낼 수 있습니다.</p>}</> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
