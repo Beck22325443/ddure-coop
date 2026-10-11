@@ -207,7 +207,10 @@ export default function RoomPage() {
       <div className="grid gap-5 lg:grid-cols-[300px_1fr_350px]">
         <aside className="space-y-5">
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
-            <h2 className="mb-3 text-lg font-black">내 정보</h2>
+            <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h2 className="text-xl font-black">내 정보</h2>
+              <p className="text-sm font-bold text-red-600">정확하게 적어주세요 불일치시 이용불가</p>
+            </div>
             <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
             <input className="mb-3 w-full rounded-xl border p-3" value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={10000} placeholder="싱크로 레벨" />
             <button className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={() => { if (validProfile()) alert("저장했습니다. 대기 신청 시 반영됩니다."); }}>정보 저장</button>

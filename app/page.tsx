@@ -77,12 +77,15 @@ export default function Home() {
         <header className="grid gap-5 md:grid-cols-2">
           <section className="rounded-3xl border bg-white p-7 shadow-sm">
             <p className="font-bold text-blue-600">NIKKE CO-OP LOBBY</p>
-            <h1 className="mt-2 text-4xl font-black text-blue-600 md:text-5xl">DDURE COOP</h1>
+            <h1 className="mt-2 text-4xl font-black text-blue-600 md:text-5xl">DDURRE COOP</h1>
             <p className="mt-3 text-slate-500">한 개의 작전방 · 선착순 대기 · 방장 승인</p>
             <p className="mt-5 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">🟢 현재 접속 {online}명</p>
           </section>
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
-            <h2 className="mb-4 text-xl font-black">내 정보</h2>
+            <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <h2 className="text-xl font-black">내 정보</h2>
+              <p className="text-sm font-bold text-red-600">정확하게 적어주세요 불일치시 이용불가</p>
+            </div>
             <label className="text-sm">인게임닉네임</label>
             <input className="mb-3 mt-1 w-full rounded-xl border p-3" maxLength={40} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
             <label className="text-sm">싱크로 레벨</label>
@@ -94,7 +97,7 @@ export default function Home() {
         <div className="grid gap-6 md:grid-cols-[330px_1fr]">
           <div className="space-y-5">
             <div className="relative h-64 overflow-hidden rounded-3xl border bg-blue-50">
-              <Image src="/toast.png" alt="DDURE COOP" fill className="object-contain p-5" />
+              <Image src="/toast.png" alt="DDURRE COOP" fill className="object-contain p-5" />
             </div>
             {!room && ready && <section className="rounded-3xl border bg-white p-6 shadow-sm">
               <h2 className="mb-4 text-xl font-black">작전방 생성</h2>
