@@ -41,7 +41,7 @@ export default function RoomPage() {
     ]);
     if (r.error) setError(r.error.message);
     else if (!r.data) setError("방이 삭제되었거나 존재하지 않습니다.");
-    else { setRoom(r.data); setError(""); setEditTitle(old => old || r.data.title); setEditNotice(old => old || r.data.notice || ""); }
+    else { setRoom(r.data); setError(""); setEditTitle(old => old || (r.data?.title ?? "")); setEditNotice(old => old || (r.data?.notice ?? "") || ""); }
     if (!p.error) setPeople(p.data || []);
     if (!q.error) setQueue(q.data || []);
     setLoaded(true);
