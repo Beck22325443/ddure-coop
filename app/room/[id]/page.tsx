@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
-import { NikkeFields, NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
+import { NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
 
 type Room = { id: number; title: string; notice: string | null; owner_user_id: string };
 type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number; is_paused: boolean; nikke_owned: NikkeChoices | null };
@@ -31,6 +31,7 @@ export default function RoomPage() {
   const [editNotice, setEditNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [profileError, setProfileError] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
@@ -41,7 +42,6 @@ export default function RoomPage() {
 
   const activePeople = people.filter(p => !p.is_paused);
   const pausedPeople = people.filter(p => p.is_paused);
-  const myPerson = people.find(p => p.user_id === userId);
   const isOwner = !!userId && room?.owner_user_id === userId;
   const isMember = people.some(p => p.user_id === userId);
   const isCoAdmin = !!userId && isMember && adminIds.includes(userId);
@@ -123,9 +123,13 @@ export default function RoomPage() {
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoaded(false);
     setRoom(null); setPeople([]); setQueue([]); setAdminIds([]); setQueueStatus(null); setMessages([]);
-    setNikkes(readNikkes());
-    setNickname(localStorage.getItem("ddure_nickname") || "");
-    setLevel(localStorage.getItem("ddure_synchro_level") || "");
+    setProfileError("");
+    const savedNikkes = readNikkes();
+    const savedNickname = (localStorage.getItem("ddure_nickname") || "").trim();
+    const savedLevel = Number(localStorage.getItem("ddure_synchro_level") || "");
+    setNikkes(savedNikkes);
+    setNickname(savedNickname);
+    setLevel(savedLevel ? String(savedLevel) : "");
     async function poll() {
       if (!active) return;
       await refresh();
@@ -143,6 +147,18 @@ export default function RoomPage() {
         if (!user) throw new Error("로그인 정보를 확인하지 못했습니다. 새로고침해 주세요.");
         if (!active) return;
         setUserId(user.id);
+        if (Number.isInteger(roomId) && roomId > 0 && savedNickname && savedNickname.length <= 40 &&
+            Number.isInteger(savedLevel) && savedLevel >= 1 && savedLevel <= 10000 && hasAllChoices(savedNikkes)) {
+          try {
+            const { error: profileErr } = await supabase.rpc("save_coop_profile_v3", {
+              p_room_id: roomId, p_nickname: savedNickname, p_level: savedLevel, p_nikkes: savedNikkes,
+            });
+            if (profileErr) throw profileErr;
+          } catch {
+            if (active) setProfileError("로비에서 저장한 정보를 반영하지 못했습니다. 연결을 확인한 뒤 새로고침해 주세요.");
+          }
+        }
+        if (!active) return;
         await poll();
       } catch (err) {
         if (active) { setError(err instanceof Error ? err.message : "로그인에 실패했습니다."); setLoaded(true); }
@@ -184,9 +200,9 @@ export default function RoomPage() {
   function validProfile() {
     const n = nickname.trim(), l = Number(level);
     if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
-      alert("인게임닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
+      alert("로비의 내 정보에서 인게임닉네임과 싱크로 레벨을 저장한 뒤 다시 들어와 주세요."); return false;
     }
-    if (!hasAllChoices(nikkes)) { alert("니케 4종의 보유·미보유를 모두 선택해 주세요."); return false; }
+    if (!hasAllChoices(nikkes)) { alert("로비의 내 정보에서 니케 4종의 보유·미보유를 저장한 뒤 다시 들어와 주세요."); return false; }
     localStorage.setItem("ddure_nikkes_v3", JSON.stringify(nikkes));
     localStorage.setItem("ddure_nickname", n);
     localStorage.setItem("ddure_synchro_level", String(l));
@@ -196,11 +212,6 @@ export default function RoomPage() {
   async function apply() {
     if (!validProfile()) return;
     await run("join_coop_queue_v3", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level), p_nikkes: nikkes });
-  }
-
-  async function saveProfile() {
-    if (!validProfile()) return;
-    await run("save_coop_profile_v3", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level), p_nikkes: nikkes }, () => alert("저장했습니다. 신청 정보도 반영되었습니다."));
   }
 
   async function send() {
@@ -223,26 +234,16 @@ export default function RoomPage() {
           <p className="whitespace-pre-wrap break-words text-xl font-bold leading-relaxed text-slate-900 md:text-2xl">{room.notice}</p>
         </section>}
       </header>
+      {profileError && <p className="rounded-xl bg-amber-50 p-3 text-amber-800">{profileError}</p>}
       {error && <p className="rounded-xl bg-red-50 p-3 text-red-600">{error}</p>}
       <div className="grid gap-5 lg:grid-cols-[300px_1fr_350px]">
         <aside className="space-y-5">
-          <section className="rounded-3xl border bg-white p-5 shadow-sm">
-            <div className="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-              <h2 className="text-xl font-black">내 정보</h2>
-              <p className="text-sm font-bold text-red-600">정확하게 적어주세요 불일치시 이용불가</p>
-            </div>
-            <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
-            <input className="mb-3 w-full rounded-xl border p-3" value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={10000} placeholder="싱크로 레벨" />
-            <NikkeFields value={nikkes} onChange={setNikkes} />
-            <button disabled={busy || !userId} className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={saveProfile}>정보 저장</button>
-            <p className="mt-3 text-sm text-slate-500">{isOwner ? "방장" : isCoAdmin ? "공동 방장" : myPerson?.is_paused ? "잠시 제외 중 · 방장이 다시 투입할 수 있습니다." : isMember ? "입장 완료" : myQueue?.status === "waiting" ? "승인 대기 중" : "아직 입장하지 않았습니다."}</p>
-          </section>
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">참여자 ({activePeople.length}/5)</h2>
             {activePeople.map(p => <div key={p.id} className="mb-2 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-slate-50 p-3">
               <div className="min-w-0">
                 <p className="flex flex-wrap items-center gap-2 break-words font-bold"><LevelBadge level={p.synchro_level} />{p.user_id === room.owner_user_id ? "[방장] " : adminIds.includes(p.user_id) ? "[공동 방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p>
-                <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p><NikkeSummary value={p.nikke_owned} />
+                <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 {canManage && <button disabled={busy} className="rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-900" onClick={() => void run("set_coop_paused_v3", { p_room_id: roomId, p_user_id: p.user_id, p_paused: true })}>잠시 제외</button>}
@@ -259,7 +260,7 @@ export default function RoomPage() {
             {pausedPeople.map(p => <div key={p.id} className="mb-3 rounded-xl bg-white p-3">
               <p className="flex flex-wrap items-center gap-2 font-bold"><LevelBadge level={p.synchro_level} />{p.user_id === room.owner_user_id ? "[방장] " : adminIds.includes(p.user_id) ? "[공동 방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p>
               <p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p>
-              <NikkeSummary value={p.nikke_owned} />
+              
               {canManage && <div className="mt-3 flex flex-wrap gap-2">
                 <button disabled={busy || activePeople.length >= 5} className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-bold text-white disabled:opacity-40" onClick={() => void run("set_coop_paused_v3", { p_room_id: roomId, p_user_id: p.user_id, p_paused: false })}>다시 투입</button>
                 {isOwner && p.user_id !== room.owner_user_id && <button disabled={busy} className="rounded-lg bg-slate-100 px-3 py-2 text-sm" onClick={() => { const enabled = !adminIds.includes(p.user_id); if (confirm(`${p.nickname}님의 권한을 ${enabled ? "부여" : "해제"}할까요?`)) void run("set_coop_admin", { p_room_id: roomId, p_user_id: p.user_id, p_enabled: enabled }); }}>{adminIds.includes(p.user_id) ? "권한 해제" : "관리자 지정"}</button>}
@@ -283,7 +284,7 @@ export default function RoomPage() {
             <p className="font-bold text-blue-700">현재 대기 순번: {queueStatus?.my_position ? `${queueStatus.my_position}번` : "확인 중"}</p>
             <p className="mt-2 flex items-center gap-2 font-bold">{myQueue.nickname}<LevelBadge level={myQueue.synchro_level} /></p>
             <NikkeSummary value={myQueue.nikke_owned} />
-            {(!myQueue.nikke_owned || !hasAllChoices(myQueue.nikke_owned)) && <p className="mt-2 text-sm text-red-600">내 정보에서 니케 보유 여부를 선택하고 저장해 주세요. 대기 순서는 유지됩니다.</p>}
+            {(!myQueue.nikke_owned || !hasAllChoices(myQueue.nikke_owned)) && <p className="mt-2 text-sm text-red-600">로비의 내 정보에서 니케 보유 여부를 저장한 뒤 다시 들어와 주세요. 대기 순서는 유지됩니다.</p>}
             <button disabled={busy} className="mt-2 rounded-lg bg-slate-200 px-4 py-2" onClick={() => void run("cancel_coop_queue", { p_room_id: roomId })}>대기 취소</button>
           </div>}
           {queueStatus === null ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기 현황을 확인하고 있습니다.</p> : queueStatus.waiting_count === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기자가 없습니다.</p> : canManage ? waiting.map((q, i) => <div key={q.id} className="mb-3 rounded-xl border p-4">
