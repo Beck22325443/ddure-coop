@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type Room = { id: number; title: string; notice: string | null; owner_user_id: string };
-type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null };
+type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number };
 type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string };
 type QueueStatus = { waiting_count: number; my_position: number | null };
 
@@ -49,7 +49,7 @@ export default function RoomPage() {
     try {
       const [r, p, q, summary] = await Promise.all([
         supabase.from("rooms").select("id,title,notice,owner_user_id").eq("id", roomId).maybeSingle(),
-        supabase.from("participants").select("id,user_id,nickname,synchro_level").eq("room_id", roomId).order("created_at"),
+        supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count").eq("room_id", roomId).order("created_at"),
         supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at")
           .eq("room_id", roomId).eq("status", "waiting")
           .order("created_at", { ascending: true, nullsFirst: false }).order("id"),
@@ -171,7 +171,7 @@ export default function RoomPage() {
   function validProfile() {
     const n = nickname.trim(), l = Number(level);
     if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
-      alert("닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
+      alert("인게임닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
     }
     localStorage.setItem("ddure_nickname", n);
     localStorage.setItem("ddure_synchro_level", String(l));
@@ -208,7 +208,7 @@ export default function RoomPage() {
         <aside className="space-y-5">
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">내 정보</h2>
-            <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="닉네임" />
+            <input className="mb-2 w-full rounded-xl border p-3" value={nickname} maxLength={40} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
             <input className="mb-3 w-full rounded-xl border p-3" value={level} onChange={e => setLevel(e.target.value)} type="number" min={1} max={10000} placeholder="싱크로 레벨" />
             <button className="w-full rounded-xl bg-slate-100 p-3 font-bold" onClick={() => { if (validProfile()) alert("저장했습니다. 대기 신청 시 반영됩니다."); }}>정보 저장</button>
             <p className="mt-3 text-sm text-slate-500">{isOwner ? "방장" : isMember ? "입장 완료" : myQueue?.status === "waiting" ? "승인 대기 중" : "아직 입장하지 않았습니다."}</p>
@@ -216,7 +216,7 @@ export default function RoomPage() {
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">참여자 ({people.length}/5)</h2>
             {people.map(p => <div key={p.id} className="mb-2 flex items-center justify-between rounded-xl bg-slate-50 p-3">
-              <div><p className="font-bold">{p.user_id === room.owner_user_id ? "[방장] " : ""}{p.nickname}</p><p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p></div>
+              <div><p className="font-bold">{p.user_id === room.owner_user_id ? "[방장] " : ""}{p.nickname}{p.entry_count > 1 ? ` (${p.entry_count})` : ""}</p><p className="text-sm text-slate-500">싱크로 {p.synchro_level ?? "-"}</p></div>
               {isOwner && p.user_id !== userId && <button disabled={busy} className="rounded-lg bg-red-100 px-3 py-2 text-sm text-red-700" onClick={() => { if (confirm(`${p.nickname}님을 강퇴할까요?`)) void run("kick_coop_user", { p_room_id: roomId, p_user_id: p.user_id }); }}>강퇴</button>}
             </div>)}
             {isMember && !isOwner && <button disabled={busy} className="mt-2 w-full rounded-xl bg-slate-200 p-3" onClick={() => { if (confirm("방에서 나가시겠습니까?")) void run("leave_coop_room", { p_room_id: roomId }); }}>방 나가기</button>}

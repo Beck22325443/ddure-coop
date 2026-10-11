@@ -52,7 +52,7 @@ export default function Home() {
     const n = nickname.trim();
     const l = Number(level);
     if (!n || n.length > 40 || !Number.isInteger(l) || l < 1 || l > 10000) {
-      alert("닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
+      alert("인게임닉네임(1~40자)과 싱크로 레벨(1~10000)을 입력해 주세요."); return false;
     }
     localStorage.setItem("ddure_nickname", n);
     localStorage.setItem("ddure_synchro_level", String(l));
@@ -83,8 +83,8 @@ export default function Home() {
           </section>
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
             <h2 className="mb-4 text-xl font-black">내 정보</h2>
-            <label className="text-sm">닉네임</label>
-            <input className="mb-3 mt-1 w-full rounded-xl border p-3" maxLength={40} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="닉네임" />
+            <label className="text-sm">인게임닉네임</label>
+            <input className="mb-3 mt-1 w-full rounded-xl border p-3" maxLength={40} value={nickname} onChange={e => setNickname(e.target.value)} placeholder="인게임닉네임" />
             <label className="text-sm">싱크로 레벨</label>
             <input className="mb-3 mt-1 w-full rounded-xl border p-3" type="number" min={1} max={10000} value={level} onChange={e => setLevel(e.target.value)} placeholder="예: 450" />
             <button onClick={() => { if (saveProfile()) alert("저장했습니다."); }} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white">정보 저장</button>
