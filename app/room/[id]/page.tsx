@@ -7,7 +7,7 @@ import { supabase } from "@/lib/supabase";
 
 import { NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
 
-type Room = { id: number; title: string; notice: string | null; owner_user_id: string };
+type Room = { id: number; title: string; notice: string | null; owner_user_id: string; queue_open: boolean };
 type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number; is_paused: boolean; nikke_owned: NikkeChoices | null };
 type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string; nikke_owned: NikkeChoices | null };
 type QueueStatus = { waiting_count: number; my_position: number | null };
@@ -57,7 +57,7 @@ export default function RoomPage() {
     const requestId = ++refreshId.current;
     try {
       const [r, p, q, summary, admins] = await Promise.all([
-        supabase.from("rooms").select("id,title,notice,owner_user_id").eq("id", roomId).maybeSingle(),
+        supabase.from("rooms").select("id,title,notice,owner_user_id,queue_open").eq("id", roomId).maybeSingle(),
         supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count,is_paused,nikke_owned").eq("room_id", roomId).order("created_at"),
         supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at,nikke_owned")
           .eq("room_id", roomId).eq("status", "waiting")
@@ -210,6 +210,7 @@ export default function RoomPage() {
   }
 
   async function apply() {
+    if (!room?.queue_open) { alert("대기 신청이 마감되었습니다."); return; }
     if (!validProfile()) return;
     await run("join_coop_queue_v3", { p_room_id: roomId, p_nickname: nickname.trim(), p_level: Number(level), p_nikkes: nikkes });
   }
@@ -270,6 +271,11 @@ export default function RoomPage() {
           </section>
           {canManage && <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">방장 관리{isCoAdmin ? " (공동 방장)" : ""}</h2>
+            <button disabled={busy} className={`mb-3 w-full rounded-xl p-3 font-bold disabled:opacity-50 ${room.queue_open ? "bg-amber-100 text-amber-900" : "bg-green-600 text-white"}`} onClick={() => {
+              const nextOpen = !room.queue_open;
+              if (confirm(nextOpen ? "대기 신청을 다시 받을까요?" : "대기 신청을 마감할까요? 기존 대기자는 유지됩니다."))
+                void run("set_coop_queue_open_v4", { p_room_id: roomId, p_open: nextOpen });
+            }}>{room.queue_open ? "대기 신청 마감" : "대기 신청 다시 열기"}</button>
             <input className="mb-2 w-full rounded-xl border p-3" value={editTitle} onChange={e => setEditTitle(e.target.value)} placeholder="방 제목" />
             <textarea rows={5} className="mb-2 w-full resize-y rounded-xl border p-3 leading-relaxed" value={editNotice} onChange={e => setEditNotice(e.target.value)} placeholder="공지사항 (Enter로 줄바꿈)" />
             <button disabled={busy} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white" onClick={() => void run("update_coop_room", { p_room_id: roomId, p_title: editTitle, p_notice: editNotice })}>정보 수정</button>
@@ -277,9 +283,13 @@ export default function RoomPage() {
           </section>}
         </aside>
         <section className="rounded-3xl border bg-white p-5 shadow-sm">
-          <h2 className="mb-2 text-xl font-black">선착순 대기열</h2>
+          <div className="mb-2 flex flex-wrap items-center gap-2">
+            <h2 className="text-xl font-black">선착순 대기열</h2>
+            <span className={`rounded-full px-3 py-1 text-xs font-bold ${room.queue_open ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-900"}`}>{room.queue_open ? "신청 접수 중" : "신청 마감"}</span>
+          </div>
+          {!room.queue_open && <p className="mb-4 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">대기 신청이 마감되었습니다. 기존 대기 순번은 유지되며 방장은 승인·거절을 계속할 수 있습니다.</p>}
           <p className="mb-5 text-sm text-slate-500">이 방에서 대기 신청한 순서입니다. 방장이 신청자를 선택하여 승인합니다. 현황은 약 3초마다 갱신됩니다.</p>
-          {!isMember && !isOwner && myQueue?.status !== "waiting" && <button disabled={busy || !userId} onClick={apply} className="mb-5 w-full rounded-xl bg-blue-600 p-4 font-bold text-white disabled:opacity-50">대기 신청하기</button>}
+          {room.queue_open && !isMember && !isOwner && myQueue?.status !== "waiting" && <button disabled={busy || !userId} onClick={apply} className="mb-5 w-full rounded-xl bg-blue-600 p-4 font-bold text-white disabled:opacity-50">대기 신청하기</button>}
           {!isMember && !isOwner && myQueue?.status === "waiting" && <div className="mb-5 rounded-xl bg-blue-50 p-4">
             <p className="font-bold text-blue-700">현재 대기 순번: {queueStatus?.my_position ? `${queueStatus.my_position}번` : "확인 중"}</p>
             <p className="mt-2 flex items-center gap-2 font-bold">{myQueue.nickname}<LevelBadge level={myQueue.synchro_level} /></p>
