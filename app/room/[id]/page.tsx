@@ -184,7 +184,7 @@ export default function RoomPage() {
   }
 
   async function send() {
-    if (!text.trim()) return;
+    if (!isOwner || !isMember || !text.trim()) return;
     await run("send_coop_message", { p_room_id: roomId, p_message: text.trim() }, () => setText(""));
   }
 
@@ -255,7 +255,7 @@ export default function RoomPage() {
           {isMember ? <><div id="room-chat" hidden={!chatOpen} className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
             {messages.length === 0 && <p className="text-sm text-slate-500">아직 메시지가 없습니다.</p>}
             {messages.map(m => <div key={m.id} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><b className="text-sm text-blue-600">{m.nickname}</b><small className="text-slate-400">{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</small></div><p className="mt-1 break-words">{m.message}</p></div>)}
-          </div><div className="mt-3 flex gap-2"><input className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy} className="rounded-xl bg-blue-600 px-4 font-bold text-white" onClick={send}>전송</button></div></> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
+          </div>{isOwner ? <div className="mt-3 flex gap-2"><input type="password" autoComplete="off" spellCheck={false} aria-label="방장 채팅 입력" className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy || !text.trim()} className="rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-50" onClick={send}>전송</button></div> : <p className="mt-3 text-sm text-slate-500">방장만 메시지를 보낼 수 있습니다.</p>}</> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
           </div>
         </aside>
       </div>
