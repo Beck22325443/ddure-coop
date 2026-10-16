@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+import { CoopExpiryLabel, isCoopRoomExpired } from "./coop-expiry";
+
 type Message = { id: number; nickname: string; message: string; created_at: string | null };
-type OtherRoom = { id: number; room_number: number; title: string };
+type OtherRoom = { coop_expires_at: string | null; id: number; room_number: number; title: string };
 const PAGE_SIZE = 50;
 
 function mergeMessages(previous: Message[], incoming: Message[]) {
@@ -152,12 +154,14 @@ export function CoopChatHistory({ roomId, singleMessage = false, refreshToken = 
   </div>;
 }
 
-export function OtherRoomChats() {
+export function OtherRoomChats({ now }: { now: number | null }) {
   const [open, setOpen] = useState(false);
   const [rooms, setRooms] = useState<OtherRoom[]>([]);
   const [expandedRoomId, setExpandedRoomId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const activeRooms = rooms.filter(room => !isCoopRoomExpired(room, now));
 
   useEffect(() => {
     if (!open) { setRooms([]); setExpandedRoomId(null); setError(""); return; }
@@ -166,7 +170,7 @@ export function OtherRoomChats() {
     setLoading(true);
     async function poll() {
       try {
-        const { data, error: queryError } = await supabase.from("rooms").select("id,room_number,title")
+        const { data, error: queryError } = await supabase.from("rooms").select("id,room_number,title,coop_expires_at")
           .neq("room_number", 1).order("room_number").limit(4).abortSignal(controller.signal);
         if (controller.signal.aborted) return;
         if (queryError) throw queryError;
@@ -197,12 +201,12 @@ export function OtherRoomChats() {
       <p className="text-xs text-slate-500">확인할 방을 펼쳐 주세요.</p>
       {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
       {loading && <p className="text-sm text-slate-500">작전방을 불러오는 중...</p>}
-      {!loading && !error && rooms.length === 0 && <p className="text-sm text-slate-500">다른 작전방이 없습니다.</p>}
-      {rooms.map(room => <div key={room.id} className="min-w-0 rounded-xl border border-slate-200">
+      {!loading && !error && activeRooms.length === 0 && <p className="text-sm text-slate-500">다른 작전방이 없습니다.</p>}
+      {activeRooms.map(room => <div key={room.id} className="min-w-0 rounded-xl border border-slate-200">
         <button type="button" aria-expanded={expandedRoomId === room.id} aria-controls={`other-room-${room.id}`}
           onClick={() => setExpandedRoomId(previous => previous === room.id ? null : room.id)}
           className="flex w-full items-center justify-between gap-3 p-3 text-left">
-          <span className="min-w-0"><span className="text-xs font-bold text-blue-700">{room.room_number}번 방</span><span className="mt-1 block break-words text-sm font-bold">{room.title}</span></span>
+          <span className="min-w-0"><span className="text-xs font-bold text-blue-700">{room.room_number}번 방</span><span className="ml-2"><CoopExpiryLabel room={room} now={now} /></span><span className="mt-1 block break-words text-sm font-bold">{room.title}</span></span>
           <span aria-hidden="true" className="shrink-0 text-slate-500">{expandedRoomId === room.id ? "▴" : "▾"}</span>
         </button>
         {expandedRoomId === room.id && <div id={`other-room-${room.id}`} className="px-3 pb-3"><CoopChatHistory roomId={room.id} /></div>}

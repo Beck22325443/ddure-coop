@@ -8,7 +8,9 @@ import { supabase } from "@/lib/supabase";
 import { NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
 import { CoopChatHistory, OtherRoomChats } from "../../components/coop-chat";
 
-type Room = { id: number; room_number: number; title: string; notice: string | null; owner_user_id: string; queue_open: boolean };
+import { CoopExpiryLabel, isCoopRoomExpired, useCoopClock } from "../../components/coop-expiry";
+
+type Room = { coop_expires_at: string | null; id: number; room_number: number; title: string; notice: string | null; owner_user_id: string; queue_open: boolean };
 type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number; is_paused: boolean; nikke_owned: NikkeChoices | null };
 type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string; nikke_owned: NikkeChoices | null };
 type QueueStatus = { waiting_count: number; my_position: number | null };
@@ -38,6 +40,10 @@ export default function RoomPage() {
   const refreshId = useRef(0);
   const running = useRef(false);
 
+  const now = useCoopClock(!!userId);
+  const roomDeadline = useRef<Room | null>(null);
+  const expired = !!roomDeadline.current && isCoopRoomExpired(roomDeadline.current, now);
+
   const activePeople = people.filter(p => !p.is_paused);
   const pausedPeople = people.filter(p => p.is_paused);
   const isOwner = !!userId && room?.owner_user_id === userId;
@@ -55,7 +61,7 @@ export default function RoomPage() {
     const requestId = ++refreshId.current;
     try {
       const [r, p, q, summary, admins] = await Promise.all([
-        supabase.from("rooms").select("id,room_number,title,notice,owner_user_id,queue_open").eq("id", roomId).maybeSingle(),
+        supabase.from("rooms").select("id,room_number,title,notice,owner_user_id,queue_open,coop_expires_at").eq("id", roomId).maybeSingle(),
         supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count,is_paused,nikke_owned").eq("room_id", roomId).order("created_at"),
         supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at,nikke_owned")
           .eq("room_id", roomId).eq("status", "waiting")
@@ -69,6 +75,7 @@ export default function RoomPage() {
       if (r.error) errors.push(r.error.message);
       else if (!currentRoom) { setRoom(null); errors.push("방이 삭제되었거나 존재하지 않습니다."); }
       else {
+        roomDeadline.current = currentRoom;
         setRoom(currentRoom);
         if (editRoomId.current !== roomId) {
           setEditTitle(currentRoom.title);
@@ -106,6 +113,7 @@ export default function RoomPage() {
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    roomDeadline.current = null;
     setLoaded(false);
     setRoom(null); setPeople([]); setQueue([]); setAdminIds([]); setQueueStatus(null);
     setChatOpen(true); setChatRefresh(0);
@@ -154,6 +162,7 @@ export default function RoomPage() {
   }, [roomId, refresh]);
 
   async function run(fn: string, args: Record<string, unknown>, success?: () => void) {
+    if (expired) { alert("생성 후 4분이 지나 종료된 작전방입니다."); return; }
     if (running.current) return;
     running.current = true;
     setBusy(true);
@@ -195,6 +204,7 @@ export default function RoomPage() {
   }
 
   if (!loaded) return <main className="min-h-screen bg-slate-50 p-8">불러오는 중...</main>;
+  if (expired) return <main className="min-h-screen bg-slate-50 p-8"><div className="mx-auto max-w-lg rounded-3xl border bg-white p-6 shadow-sm"><h1 className="text-xl font-black">작전방이 종료되었습니다.</h1><p className="mt-3 text-slate-600">2~5번 방은 생성 후 4분이 지나면 자동 삭제됩니다.</p><Link href="/" className="mt-5 inline-block rounded-xl bg-blue-600 px-5 py-3 font-bold text-white">로비로 돌아가기</Link></div></main>;
   if (error && !room) return <main className="min-h-screen bg-slate-50 p-8"><Link href="/" className="text-blue-600">← 로비</Link><p className="mt-6 text-red-600">{error}</p></main>;
   if (!room) return <main className="p-8">방을 찾을 수 없습니다.</main>;
 
@@ -202,7 +212,7 @@ export default function RoomPage() {
     <div className="mx-auto max-w-6xl space-y-5">
       <header className="rounded-3xl border bg-white p-6 shadow-sm">
         <Link href="/" className="text-blue-600">← 로비로 돌아가기</Link>
-        <p className="mt-3 text-sm font-bold text-blue-600">{room.room_number}번 방</p>
+        <div className="mt-3 flex flex-wrap items-center gap-3"><p className="text-sm font-bold text-blue-600">{room.room_number}번 방</p><CoopExpiryLabel room={room} now={now} /></div>
         <h1 className="mt-1 break-words text-3xl font-black">{room.title}</h1>
         <p className="mt-2 text-slate-500">참여 {activePeople.length}/5 · 잠시 제외 {pausedPeople.length}명 · 대기 {queueStatus ? `${queueStatus.waiting_count}명` : "확인 중"}</p>
         {room.notice?.trim() && <section aria-labelledby="room-notice-title" className="mt-5 rounded-2xl border-2 border-blue-300 bg-blue-50 p-5 md:p-7">
@@ -286,7 +296,7 @@ export default function RoomPage() {
                 className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold"
                 onClick={() => setChatOpen(open => !open)}>{chatOpen ? "내용 숨기기" : "내용 보기"}</button>
             </div>
-            <p className="mb-3 text-xs text-slate-500">{room.room_number === 1 ? "최신 메시지 1개만 표시됩니다." : "채팅 내역이 계속 보관됩니다."}</p>
+            <p className="mb-3 text-xs text-slate-500">{room.room_number === 1 ? "최신 메시지 1개만 표시됩니다." : "방이 자동 삭제될 때까지 모든 채팅 내역을 볼 수 있습니다."}</p>
             {isMember ? <>
               <div id="room-chat">
                 {chatOpen && <CoopChatHistory key={roomId} roomId={roomId} singleMessage={room.room_number === 1} refreshToken={chatRefresh} />}
@@ -297,7 +307,7 @@ export default function RoomPage() {
               </div> : <p className="mt-3 text-sm text-slate-500">방장 또는 공동 방장만 메시지를 보낼 수 있습니다.</p>}
             </> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
           </section>
-          {isOwner && room.room_number === 1 && <OtherRoomChats />}
+          {isOwner && room.room_number === 1 && <OtherRoomChats now={now} />}
         </aside>
       </div>
     </div>

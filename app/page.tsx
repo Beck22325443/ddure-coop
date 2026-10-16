@@ -7,7 +7,9 @@ import { supabase } from "@/lib/supabase";
 
 import { NikkeFields, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "./components/coop-profile";
 
-type Room = { id: number; room_number: number; title: string; notice: string | null };
+import { CoopExpiryLabel, isCoopRoomExpired, useCoopClock } from "./components/coop-expiry";
+
+type Room = { coop_expires_at: string | null; id: number; room_number: number; title: string; notice: string | null };
 
 export default function Home() {
   const [ready, setReady] = useState(false);
@@ -20,9 +22,12 @@ export default function Home() {
   const [online, setOnline] = useState(0);
   const [error, setError] = useState("");
 
+  const now = useCoopClock(ready);
+  const activeRooms = rooms.filter(room => !isCoopRoomExpired(room, now));
+
   async function loadRoom() {
     const { data, error: err } = await supabase.from("rooms")
-      .select("id,room_number,title,notice").order("room_number", { ascending: true }).limit(5);
+      .select("id,room_number,title,notice,coop_expires_at").order("room_number", { ascending: true }).limit(5);
     if (err) setError(err.message);
     else { setRooms(data || []); setError(""); }
   }
@@ -85,6 +90,7 @@ export default function Home() {
             <p className="font-bold text-blue-600">NIKKE CO-OP LOBBY</p>
             <h1 className="mt-2 text-4xl font-black text-blue-600 md:text-5xl">DDURRE COOP</h1>
             <p className="mt-3 text-slate-500">최대 5개의 작전방 · 선착순 대기 · 방장 승인</p>
+            <p className="mt-2 text-sm text-slate-500">1번 방 상시 운영 · 2~5번 방 생성 후 4분 자동 삭제</p>
             <p className="mt-5 inline-block rounded-full bg-green-100 px-4 py-2 text-sm font-bold text-green-700">🟢 현재 접속 {online}명</p>
           </section>
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
@@ -106,16 +112,17 @@ export default function Home() {
             <div className="relative h-64 overflow-hidden rounded-3xl border bg-blue-50">
               <Image src="/toast.png" alt="DDURRE COOP" fill className="object-contain p-5" />
             </div>
-            {rooms.length < 5 && ready && <section className="rounded-3xl border bg-white p-6 shadow-sm">
+            {activeRooms.length < 5 && ready && <section className="rounded-3xl border bg-white p-6 shadow-sm">
               <h2 className="mb-4 text-xl font-black">작전방 생성</h2>
               <input className="mb-3 w-full rounded-xl border p-3" value={title} onChange={e => setTitle(e.target.value)} placeholder="방 제목" maxLength={100} />
               <button disabled={busy} onClick={createRoom} className="w-full rounded-xl bg-blue-600 p-3 font-bold text-white disabled:opacity-50">{busy ? "생성 중..." : "+ 방 만들기"}</button>
             </section>}
           </div>
           <section className="rounded-3xl border bg-white p-6 shadow-sm">
-            <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-black">현재 작전방 ({rooms.length}/5)</h2><button onClick={loadRoom} className="rounded-lg bg-slate-100 px-3 py-2 text-sm">새로고침</button></div>
-            {!ready ? <p>연결 중...</p> : rooms.length > 0 ? <div className="space-y-3">{rooms.map(room => <Link key={room.id} href={`/room/${room.id}`} onClick={e => { if (!saveProfile()) e.preventDefault(); }} className="block rounded-2xl border border-blue-200 bg-blue-50 p-6 hover:bg-blue-100">
+            <div className="mb-5 flex items-center justify-between"><h2 className="text-xl font-black">현재 작전방 ({activeRooms.length}/5)</h2><button onClick={loadRoom} className="rounded-lg bg-slate-100 px-3 py-2 text-sm">새로고침</button></div>
+            {!ready ? <p>연결 중...</p> : activeRooms.length > 0 ? <div className="space-y-3">{activeRooms.map(room => <Link key={room.id} href={`/room/${room.id}`} onClick={e => { if (!saveProfile()) e.preventDefault(); }} className="block rounded-2xl border border-blue-200 bg-blue-50 p-6 hover:bg-blue-100">
               <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-blue-700">{room.room_number}번 방</span>
+              <span className="ml-3"><CoopExpiryLabel room={room} now={now} /></span>
               <h3 className="mt-2 text-2xl font-black">{room.title}</h3><p className="mt-3 text-slate-600">입장 대기 및 신청하기 →</p>
             </Link>)}</div> : <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">현재 개설된 방이 없습니다.</p>}
           </section>
