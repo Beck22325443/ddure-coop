@@ -38,7 +38,16 @@ export function NikkeFields({ value, onChange }: { value: NikkeChoices; onChange
     </div>)}
   </fieldset>;
 }
-export function NikkeSummary({ value }: { value?: NikkeChoices | null }) {
+export function NikkeSummary({ value, missingOnly = false }: { value?: NikkeChoices | null; missingOnly?: boolean }) {
+  if (missingOnly) {
+    const missing = NIKKES.filter(([key]) => value?.[key] === false);
+    const incomplete = !value || !hasAllChoices(value);
+    if (missing.length === 0 && !incomplete) return null;
+    return <div className="mt-2 flex flex-wrap gap-1.5" aria-label="미보유 니케">
+      {missing.map(([key, label]) => <span key={key} className="rounded-md bg-rose-50 px-2 py-1 text-xs font-bold text-rose-700">{label} · 미보유</span>)}
+      {incomplete && <span className="rounded-md bg-amber-50 px-2 py-1 text-xs text-amber-800">보유 정보 입력 필요</span>}
+    </div>;
+  }
   return <div className="mt-2 flex flex-wrap gap-1.5" aria-label="니케 보유 현황">
     {NIKKES.map(([key, label]) => <span key={key} className={`rounded-md px-2 py-1 text-xs ${value?.[key] === true ? "bg-blue-100 text-blue-800" : "bg-slate-100 text-slate-600"}`}>
       {label} · {value?.[key] === true ? "보유" : value?.[key] === false ? "미보유" : "미입력"}

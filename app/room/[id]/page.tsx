@@ -6,13 +6,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 import { NikkeSummary, LevelBadge, readNikkes, emptyNikkes, hasAllChoices, type NikkeChoices } from "../../components/coop-profile";
+import { CoopChatHistory, OtherRoomChats } from "../../components/coop-chat";
 
-type Room = { id: number; title: string; notice: string | null; owner_user_id: string; queue_open: boolean };
+type Room = { id: number; room_number: number; title: string; notice: string | null; owner_user_id: string; queue_open: boolean };
 type Person = { id: number; user_id: string; nickname: string; synchro_level: number | null; entry_count: number; is_paused: boolean; nikke_owned: NikkeChoices | null };
 type Queue = { id: number; user_id: string; nickname: string; synchro_level: number; status: string; created_at: string; nikke_owned: NikkeChoices | null };
 type QueueStatus = { waiting_count: number; my_position: number | null };
-
-type Msg = { id: number; nickname: string; message: string; created_at: string };
 
 export default function RoomPage() {
   const roomId = Number(useParams().id);
@@ -23,7 +22,7 @@ export default function RoomPage() {
   const [people, setPeople] = useState<Person[]>([]);
   const [queue, setQueue] = useState<Queue[]>([]);
   const [adminIds, setAdminIds] = useState<string[]>([]);
-  const [messages, setMessages] = useState<Msg[]>([]);
+  const [chatRefresh, setChatRefresh] = useState(0);
   const [nickname, setNickname] = useState("");
   const [level, setLevel] = useState("");
   const [text, setText] = useState("");
@@ -35,7 +34,6 @@ export default function RoomPage() {
   const [loaded, setLoaded] = useState(false);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
   const [chatOpen, setChatOpen] = useState(true);
-  const [chatError, setChatError] = useState("");
   const editRoomId = useRef<number | null>(null);
   const refreshId = useRef(0);
   const running = useRef(false);
@@ -57,7 +55,7 @@ export default function RoomPage() {
     const requestId = ++refreshId.current;
     try {
       const [r, p, q, summary, admins] = await Promise.all([
-        supabase.from("rooms").select("id,title,notice,owner_user_id,queue_open").eq("id", roomId).maybeSingle(),
+        supabase.from("rooms").select("id,room_number,title,notice,owner_user_id,queue_open").eq("id", roomId).maybeSingle(),
         supabase.from("participants").select("id,user_id,nickname,synchro_level,entry_count,is_paused,nikke_owned").eq("room_id", roomId).order("created_at"),
         supabase.from("waiting_queue").select("id,user_id,nickname,synchro_level,status,created_at,nikke_owned")
           .eq("room_id", roomId).eq("status", "waiting")
@@ -105,24 +103,12 @@ export default function RoomPage() {
     }
   }, [roomId]);
 
-  const refreshMessages = useCallback(async () => {
-    try {
-      const { data, error: err } = await supabase.from("messages")
-        .select("id,nickname,message,created_at").eq("room_id", roomId)
-        .order("created_at", { ascending: false }).order("id", { ascending: false }).limit(1);
-      if (err) { setChatError(err.message); return; }
-      setMessages((data || []).slice().reverse());
-      setChatError("");
-    } catch (err) {
-      setChatError(err instanceof Error ? err.message : "채팅을 불러오지 못했습니다.");
-    }
-  }, [roomId]);
-
   useEffect(() => {
     let active = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     setLoaded(false);
-    setRoom(null); setPeople([]); setQueue([]); setAdminIds([]); setQueueStatus(null); setMessages([]);
+    setRoom(null); setPeople([]); setQueue([]); setAdminIds([]); setQueueStatus(null);
+    setChatOpen(true); setChatRefresh(0);
     setProfileError("");
     const savedNikkes = readNikkes();
     const savedNickname = (localStorage.getItem("ddure_nickname") || "").trim();
@@ -167,18 +153,6 @@ export default function RoomPage() {
     return () => { active = false; clearTimeout(timer); ++refreshId.current; };
   }, [roomId, refresh]);
 
-  useEffect(() => {
-    if (!isMember || !chatOpen) return;
-    let active = true;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    async function poll() {
-      await refreshMessages();
-      if (active) timer = setTimeout(() => { void poll(); }, 3000);
-    }
-    void poll();
-    return () => { active = false; clearTimeout(timer); };
-  }, [isMember, chatOpen, refreshMessages]);
-
   async function run(fn: string, args: Record<string, unknown>, success?: () => void) {
     if (running.current) return;
     running.current = true;
@@ -187,7 +161,7 @@ export default function RoomPage() {
       const { error: err } = await supabase.rpc(fn, args);
       if (err) throw err;
       await refresh();
-      if (isMember && chatOpen) await refreshMessages();
+      if (fn === "send_coop_message") setChatRefresh(value => value + 1);
       success?.();
     } catch (err) {
       alert(err instanceof Error ? err.message : String((err as { message?: string })?.message || "요청에 실패했습니다."));
@@ -228,7 +202,8 @@ export default function RoomPage() {
     <div className="mx-auto max-w-6xl space-y-5">
       <header className="rounded-3xl border bg-white p-6 shadow-sm">
         <Link href="/" className="text-blue-600">← 로비로 돌아가기</Link>
-        <h1 className="mt-3 text-3xl font-black">{room.title}</h1>
+        <p className="mt-3 text-sm font-bold text-blue-600">{room.room_number}번 방</p>
+        <h1 className="mt-1 break-words text-3xl font-black">{room.title}</h1>
         <p className="mt-2 text-slate-500">참여 {activePeople.length}/5 · 잠시 제외 {pausedPeople.length}명 · 대기 {queueStatus ? `${queueStatus.waiting_count}명` : "확인 중"}</p>
         {room.notice?.trim() && <section aria-labelledby="room-notice-title" className="mt-5 rounded-2xl border-2 border-blue-300 bg-blue-50 p-5 md:p-7">
           <h2 id="room-notice-title" className="mb-3 text-lg font-black text-blue-700">📢 방장 공지</h2>
@@ -237,7 +212,7 @@ export default function RoomPage() {
       </header>
       {profileError && <p className="rounded-xl bg-amber-50 p-3 text-amber-800">{profileError}</p>}
       {error && <p className="rounded-xl bg-red-50 p-3 text-red-600">{error}</p>}
-      <div className="grid gap-5 lg:grid-cols-[300px_1fr_350px]">
+      <div className="grid items-start gap-5 lg:grid-cols-[260px_minmax(0,1fr)_320px]">
         <aside className="space-y-5">
           <section className="rounded-3xl border bg-white p-5 shadow-sm">
             <h2 className="mb-3 text-lg font-black">참여자 ({activePeople.length}/5)</h2>
@@ -282,7 +257,7 @@ export default function RoomPage() {
             <button disabled={busy} className="mt-3 w-full rounded-xl bg-red-600 p-3 font-bold text-white" onClick={() => { if (confirm("방과 대기열, 채팅을 모두 삭제할까요?")) void run("delete_coop_room", { p_room_id: roomId }, () => router.push("/")); }}>방 삭제</button>
           </section>}
         </aside>
-        <section className="rounded-3xl border bg-white p-5 shadow-sm">
+        <section className="min-w-0 rounded-3xl border bg-white p-5 shadow-sm">
           <div className="mb-2 flex flex-wrap items-center gap-2">
             <h2 className="text-xl font-black">선착순 대기열</h2>
             <span className={`rounded-full px-3 py-1 text-xs font-bold ${room.queue_open ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-900"}`}>{room.queue_open ? "신청 접수 중" : "신청 마감"}</span>
@@ -298,26 +273,31 @@ export default function RoomPage() {
             <button disabled={busy} className="mt-2 rounded-lg bg-slate-200 px-4 py-2" onClick={() => void run("cancel_coop_queue", { p_room_id: roomId })}>대기 취소</button>
           </div>}
           {queueStatus === null ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기 현황을 확인하고 있습니다.</p> : queueStatus.waiting_count === 0 ? <p className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">대기자가 없습니다.</p> : canManage ? waiting.map((q, i) => <div key={q.id} className="mb-3 rounded-xl border p-4">
-            <p className="flex flex-wrap items-center gap-2 font-bold">{i + 1}번 · {q.nickname}<LevelBadge level={q.synchro_level} /></p><p className="text-sm text-slate-500">싱크로 {q.synchro_level}</p><NikkeSummary value={q.nikke_owned} /><div className="mb-3" />
+            <p className="flex flex-wrap items-center gap-2 break-words font-bold">{i + 1}번 · {q.nickname}<LevelBadge level={q.synchro_level} /></p><p className="text-sm text-slate-500">싱크로 {q.synchro_level}</p><NikkeSummary value={q.nikke_owned} missingOnly /><div className="mb-3" />
             <div className="flex gap-2"><button disabled={busy || activePeople.length >= 5 || !q.nikke_owned || !hasAllChoices(q.nikke_owned)} className="rounded-lg bg-blue-600 px-4 py-2 font-bold text-white disabled:opacity-40" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "approve" })}>승인</button>
             <button disabled={busy} className="rounded-lg bg-red-100 px-4 py-2 text-red-700" onClick={() => void run("manage_coop_queue", { p_queue_id: q.id, p_action: "reject" })}>거절</button></div>
           </div>) : <p className="rounded-xl bg-slate-50 p-5 text-center text-slate-500">현재 {queueStatus.waiting_count}명이 대기 중입니다. 다른 신청자의 정보는 방장 및 공동 방장에게만 표시됩니다.</p>}
         </section>
-        <aside className={`flex flex-col self-start rounded-3xl border bg-white p-5 shadow-sm ${chatOpen ? "h-[540px]" : ""}`}>
-          <div className="mb-4 flex items-center justify-between gap-3">
-            <h2 className="text-xl font-black">실시간 채팅</h2>
-            <button type="button" aria-expanded={chatOpen} aria-controls="room-chat"
-              className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold"
-              onClick={() => setChatOpen(open => !open)}>{chatOpen ? "내용 숨기기" : "내용 보기"}</button>
-          </div>
-          <p className="mb-3 text-xs text-slate-500">최신 메시지 1개만 표시됩니다.</p>
-          <div className="flex min-h-0 flex-1 flex-col">
-          {chatError && <p className="mb-2 text-sm text-red-600">{chatError}</p>}
-          {isMember ? <><div id="room-chat" hidden={!chatOpen} className="flex min-h-0 flex-1 flex-col justify-end gap-3 overflow-y-auto rounded-xl bg-slate-50 p-3">
-            {messages.length === 0 && <p className="text-sm text-slate-500">아직 메시지가 없습니다.</p>}
-            {messages.map(m => <div key={m.id} className="rounded-xl bg-white p-3"><div className="flex justify-between gap-2"><b className="text-sm text-blue-600">{m.nickname}</b><small className="text-slate-400">{new Date(m.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}</small></div><p className="mt-1 break-words">{m.message}</p></div>)}
-          </div>{canManage ? <div className="mt-3 flex gap-2"><input type="password" autoComplete="off" spellCheck={false} aria-label="방장 채팅 입력" className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" /><button disabled={busy || !text.trim()} className="rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-50" onClick={send}>전송</button></div> : <p className="mt-3 text-sm text-slate-500">방장 또는 공동 방장만 메시지를 보낼 수 있습니다.</p>}</> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
-          </div>
+        <aside className="min-w-0 space-y-5">
+          <section className="min-w-0 rounded-3xl border bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-xl font-black">실시간 채팅</h2>
+              <button type="button" aria-expanded={chatOpen} aria-controls="room-chat"
+                className="rounded-lg bg-slate-100 px-3 py-2 text-sm font-bold"
+                onClick={() => setChatOpen(open => !open)}>{chatOpen ? "내용 숨기기" : "내용 보기"}</button>
+            </div>
+            <p className="mb-3 text-xs text-slate-500">{room.room_number === 1 ? "최신 메시지 1개만 표시됩니다." : "채팅 내역이 계속 보관됩니다."}</p>
+            {isMember ? <>
+              <div id="room-chat">
+                {chatOpen && <CoopChatHistory key={roomId} roomId={roomId} singleMessage={room.room_number === 1} refreshToken={chatRefresh} />}
+              </div>
+              {canManage ? <div className="mt-3 flex gap-2">
+                <input type="password" autoComplete="off" spellCheck={false} aria-label="방장 채팅 입력" className="min-w-0 flex-1 rounded-xl border p-3" maxLength={500} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) void send(); }} placeholder="메시지 입력" />
+                <button disabled={busy || !text.trim()} className="rounded-xl bg-blue-600 px-4 font-bold text-white disabled:opacity-50" onClick={send}>전송</button>
+              </div> : <p className="mt-3 text-sm text-slate-500">방장 또는 공동 방장만 메시지를 보낼 수 있습니다.</p>}
+            </> : <div className="rounded-xl bg-slate-50 p-6 text-center text-slate-500">방장 승인 후 채팅할 수 있습니다.</div>}
+          </section>
+          {isOwner && room.room_number === 1 && <OtherRoomChats />}
         </aside>
       </div>
     </div>
